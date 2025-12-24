@@ -139,14 +139,17 @@ A: Windows requires admin privileges to modify registry. Right-click the app and
 
 **The backend source code (Rust) has been removed from this repository.**
 
-Due to some individuals using this open-source project for commercial purposes (charging fees), I have decided to close-source the backend code. Only the frontend code and pre-built binaries are available now.
+Some individuals violated the GPL-3.0 license by using this project for commercial purposes without open-sourcing their modifications. This is a clear violation of the GPL-3.0 terms which require:
 
-**This project is and will always be FREE. If anyone charges you for this software, you have been scammed!**
+- ✅ Derivative works must be open-sourced under GPL-3.0
+- ✅ Source code must be made available
+- ✅ License and copyright notices must be preserved
 
-- ✅ Free download from [Releases](https://github.com/hj01857655/kiro-account-manager/releases)
-- ✅ Free to use for personal purposes
-- ❌ Commercial use is strictly prohibited
-- ❌ Reselling or charging for this software is prohibited
+Due to these violations, I have decided to close-source the backend code. Only the frontend code and pre-built binaries are available now.
+
+**⚠️ This project is and will always be FREE!**
+
+If anyone charges you for this software, they are violating the GPL-3.0 license and you have been scammed! Please report such violations.
 
 ## ⚠️ Disclaimer
 
@@ -154,7 +157,15 @@ This software is for learning and communication purposes only. Do not use for co
 
 ## 📄 License
 
-[GPL-3.0](LICENSE) - Modifications must be open-sourced. Commercial use is prohibited.
+[GPL-3.0](LICENSE)
+
+**GPL-3.0 requires:**
+- Derivative works must be open-sourced under the same license
+- Source code must be provided or made available
+- Original license and copyright must be preserved
+- No additional restrictions may be imposed
+
+**Violators will be reported and may face legal consequences.**
 
 ## 💖 Sponsor / 赞助
 
