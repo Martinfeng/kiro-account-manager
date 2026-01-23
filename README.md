@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  🌐 <b><a href="https://vercel-api-lemon-five.vercel.app">官方网站</a></b> | 
+  🌐 <b><a href="https://kiro-website-six.vercel.app">官方网站</a></b> | 
   📥 <b><a href="#-下载">立即下载</a></b> | 
   💬 <b><a href="https://qm.qq.com/q/Vh7mUrNpa8">加入 QQ 群</a></b>
 </p>
