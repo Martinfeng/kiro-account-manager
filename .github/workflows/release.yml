@@ -112,9 +112,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          # Linux AppImage 使用 xz 压缩（squashfs 标准格式）
-          # linuxdeploy-plugin-appimage 使用 LDAI_COMP 环境变量
-          LDAI_COMP: ${{ matrix.platform == 'ubuntu-22.04' && 'xz' || '' }}
+          # Linux AppImage 使用 gzip 压缩，兼容旧版 AppImageLauncher
+          APPIMAGETOOL_COMP: ${{ matrix.platform == 'ubuntu-22.04' && 'gzip' || '' }}
         with:
           tagName: v__VERSION__
           releaseName: 'Kiro Account Manager v__VERSION__'
