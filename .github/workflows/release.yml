@@ -29,9 +29,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          repository: ${{ secrets.SOURCE_REPO }}
+          repository: ${{ secrets.PRIVATE_REPO }}
           ref: ${{ github.ref_name }}
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.PRIVATE_REPO_TOKEN }}
 
       - name: Install Linux dependencies
         if: matrix.platform == 'ubuntu-22.04'
