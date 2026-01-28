@@ -49,7 +49,12 @@ jobs:
         uses: swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          # 即使构建失败也保存缓存
           cache-on-failure: true
+          # 为不同平台使用不同的缓存 key
+          key: ${{ matrix.platform }}-${{ matrix.target || 'default' }}
+          # 跨 job 共享缓存（加快首次构建）
+          shared-key: "release"
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -75,7 +80,7 @@ jobs:
           echo "" >> release_notes.md
           
           if [ -n "$PREVIOUS_TAG" ]; then
-            # 获取两个 tag 之间的 commits，过滤掉 docs/ci/chore/refactor 等内部开发相关的 commit
+            # 获取两个 tag 之间的 commits，过滤掉 docs/ci/chore/ refactor等内部开发相关的 commit
             git log ${PREVIOUS_TAG}..HEAD --pretty=format:"- %s" --no-merges | \
               grep -v "^- docs:" | \
               grep -v "^- ci:" | \
