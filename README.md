@@ -9,7 +9,7 @@
   <img src="https://img.shields.io/github/v/release/hj01857655/kiro-account-manager?label=Version&color=green" alt="Version">
   <img src="https://img.shields.io/github/downloads/hj01857655/kiro-account-manager/total?color=brightgreen" alt="Downloads">
   <img src="https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-orange" alt="License">
-  <img src="https://img.shields.io/badge/QQ群-1020204332-12B7F5?logo=tencentqq" alt="QQ群">
+  <img src="https://img.shields.io/badge/QQ群-1080919449-12B7F5?logo=tencentqq" alt="QQ群">
   <img src="https://img.shields.io/badge/语言-简体中文-red" alt="语言">
 </p>
 
@@ -211,16 +211,6 @@
 - 一键启动 / 关闭
 - 自动同步代理和模型设置
 
-### ⚡ API 代理服务
-
-需要 OpenAI 兼容 API？请使用独立项目 **[kiro-gateway](https://github.com/hj01857655/kiro-gateway)**
-
-- 多账号轮询
-- Token 自动刷新
-- 流式响应
-- 工具调用
-- 支持 OpenAI 和 Anthropic 格式接口
-
 ---
 
 ## 📸 截图
@@ -270,12 +260,6 @@ A: 网络超时，手动再刷新一次或换个网络试试。
   <img src="src/assets/donate/wechat.jpg" alt="微信" width="200">
   <img src="src/assets/donate/alipay.jpg" alt="支付宝" width="200">
 </p>
-
----
-
-## 🔗 相关项目
-
-- **[kiro-gateway](https://github.com/hj01857655/kiro-gateway)** - Kiro API 网关，提供 OpenAI/Anthropic 兼容接口
 
 ---
 
