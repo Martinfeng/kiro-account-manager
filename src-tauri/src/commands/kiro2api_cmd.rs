@@ -32,15 +32,54 @@ pub struct Kiro2ApiStatus {
     pub message: Option<String>,
 }
 
-fn default_project_path() -> String {
+fn default_project_candidates() -> Vec<PathBuf> {
     let home = std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
         .unwrap_or_else(|_| ".".to_string());
-    PathBuf::from(home)
-        .join("project")
-        .join("Kiro2api-Node")
-        .to_string_lossy()
-        .to_string()
+    let home_dir = PathBuf::from(home);
+
+    vec![
+        home_dir.join("project").join("Kiro2api-Node"),
+        home_dir.join("project").join("kiro2api-node"),
+        home_dir.join("Kiro2api-Node"),
+        home_dir.join("kiro2api-node"),
+    ]
+}
+
+fn is_valid_project_dir(project_dir: &PathBuf) -> bool {
+    project_dir.exists() && project_dir.join("src").join("index.js").exists()
+}
+
+fn resolve_project_path(project_path: Option<String>) -> Result<String, String> {
+    let mut provided_error: Option<String> = None;
+
+    if let Some(path) = project_path {
+        let trimmed = path.trim();
+        if !trimmed.is_empty() {
+            let project_dir = PathBuf::from(trimmed);
+            if is_valid_project_dir(&project_dir) {
+                return Ok(trimmed.to_string());
+            }
+            provided_error = Some(format!("project path not found: {}", trimmed));
+        }
+    }
+
+    for candidate in default_project_candidates() {
+        if is_valid_project_dir(&candidate) {
+            return Ok(candidate.to_string_lossy().to_string());
+        }
+    }
+
+    let checked = default_project_candidates()
+        .into_iter()
+        .map(|p| p.to_string_lossy().to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let prefix = provided_error.unwrap_or_else(|| "Kiro2api-Node project not found.".to_string());
+    Err(format!(
+        "{} Please set project path in Kiro2API tab. Checked: {}",
+        prefix, checked
+    ))
 }
 
 fn account_store_path() -> PathBuf {
@@ -220,12 +259,9 @@ pub async fn start_kiro2api_service(
         }
     }
 
-    let project_path = params.project_path.unwrap_or_else(default_project_path);
+    let project_path = resolve_project_path(params.project_path)?;
     let project_dir = PathBuf::from(&project_path);
-    if !project_dir.exists() {
-        return Err(format!("project path not found: {}", project_path));
-    }
-    if !project_dir.join("src").join("index.js").exists() {
+    if !is_valid_project_dir(&project_dir) {
         return Err(format!("invalid Kiro2api-Node project path: {}", project_path));
     }
 

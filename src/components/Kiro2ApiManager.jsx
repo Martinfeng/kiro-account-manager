@@ -5,7 +5,7 @@ import { Play, Square, RefreshCw, ExternalLink, Server, Activity } from 'lucide-
 import { useTheme } from '../contexts/ThemeContext'
 
 const DEFAULTS = {
-  projectPath: '/Users/feng/project/Kiro2api-Node',
+  projectPath: '',
   port: 8080,
   apiKey: 'sk-default-key',
   adminKey: 'admin-default-key',
@@ -13,6 +13,8 @@ const DEFAULTS = {
   region: 'us-east-1',
   kiroVersion: '0.8.0',
 }
+
+const LEGACY_FIXED_PROJECT_PATH = '/Users/feng/project/Kiro2api-Node'
 
 function Kiro2ApiManager() {
   const { theme, colors } = useTheme()
@@ -50,8 +52,12 @@ function Kiro2ApiManager() {
   const loadSettings = async () => {
     try {
       const settings = await invoke('get_app_settings').catch(() => ({}))
+      const rawPath = settings.kiro2apiProjectPath || ''
+      // 兼容旧版本写死的路径，自动降级为空以触发后端自动探测
+      const projectPath = rawPath === LEGACY_FIXED_PROJECT_PATH ? '' : rawPath
+
       setForm({
-        projectPath: settings.kiro2apiProjectPath || DEFAULTS.projectPath,
+        projectPath,
         port: settings.kiro2apiPort || DEFAULTS.port,
         apiKey: settings.kiro2apiApiKey || DEFAULTS.apiKey,
         adminKey: settings.kiro2apiAdminKey || DEFAULTS.adminKey,
@@ -67,9 +73,10 @@ function Kiro2ApiManager() {
   const saveSettings = async () => {
     setSaving(true)
     try {
+      const projectPath = form.projectPath.trim()
       await invoke('save_app_settings', {
         settings: {
-          kiro2apiProjectPath: form.projectPath.trim(),
+          kiro2apiProjectPath: projectPath || null,
           kiro2apiPort: Number(form.port) || DEFAULTS.port,
           kiro2apiApiKey: form.apiKey.trim(),
           kiro2apiAdminKey: form.adminKey.trim(),
@@ -132,9 +139,10 @@ function Kiro2ApiManager() {
     setSuccess('')
     try {
       await saveSettings()
+      const projectPath = form.projectPath.trim()
       const res = await invoke('start_kiro2api_service', {
         params: {
-          projectPath: form.projectPath.trim(),
+          projectPath: projectPath || null,
           port: Number(form.port) || DEFAULTS.port,
           apiKey: form.apiKey.trim() || DEFAULTS.apiKey,
           adminKey: form.adminKey.trim() || DEFAULTS.adminKey,
@@ -295,6 +303,7 @@ function Kiro2ApiManager() {
               <input
                 value={form.projectPath}
                 onChange={e => setField('projectPath', e.target.value)}
+                placeholder="留空自动探测: ~/project/Kiro2api-Node"
                 className={`w-full px-3 py-2 rounded-lg border ${colors.cardBorder} ${colors.input} ${colors.text}`}
               />
             </label>
