@@ -2,6 +2,7 @@
   "nav.home": "首页",
   "nav.accounts": "账号管理",
   "nav.kiroConfig": "规则配置",
+  "nav.kiro2api": "Kiro2API",
   "nav.desktopOAuth": "桌面授权登录",
   "nav.socialIdC": "Google/GitHub/IdC",
   "nav.webOAuth": "网页授权登录",

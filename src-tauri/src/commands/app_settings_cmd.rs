@@ -17,6 +17,14 @@ pub struct AppSettings {
     pub bind_machine_id_to_account: Option<bool>,  // 是否启用账户绑定机器码
     pub use_bound_machine_id: Option<bool>,        // 切换时使用绑定的机器码（否则随机生成）
     pub account_machine_ids: Option<std::collections::HashMap<String, String>>,  // 账户ID -> 机器码映射
+    // Kiro2API 服务配置
+    pub kiro2api_project_path: Option<String>,
+    pub kiro2api_port: Option<i32>,
+    pub kiro2api_api_key: Option<String>,
+    pub kiro2api_admin_key: Option<String>,
+    pub kiro2api_proxy_url: Option<String>,
+    pub kiro2api_region: Option<String>,
+    pub kiro2api_kiro_version: Option<String>,
 }
 
 fn get_app_settings_path() -> PathBuf {
@@ -63,6 +71,13 @@ fn save_app_settings_inner(updates: AppSettings) -> Result<(), String> {
     if updates.bind_machine_id_to_account.is_some() { current.bind_machine_id_to_account = updates.bind_machine_id_to_account; }
     if updates.use_bound_machine_id.is_some() { current.use_bound_machine_id = updates.use_bound_machine_id; }
     if updates.account_machine_ids.is_some() { current.account_machine_ids = updates.account_machine_ids; }
+    if updates.kiro2api_project_path.is_some() { current.kiro2api_project_path = updates.kiro2api_project_path; }
+    if updates.kiro2api_port.is_some() { current.kiro2api_port = updates.kiro2api_port; }
+    if updates.kiro2api_api_key.is_some() { current.kiro2api_api_key = updates.kiro2api_api_key; }
+    if updates.kiro2api_admin_key.is_some() { current.kiro2api_admin_key = updates.kiro2api_admin_key; }
+    if updates.kiro2api_proxy_url.is_some() { current.kiro2api_proxy_url = updates.kiro2api_proxy_url; }
+    if updates.kiro2api_region.is_some() { current.kiro2api_region = updates.kiro2api_region; }
+    if updates.kiro2api_kiro_version.is_some() { current.kiro2api_kiro_version = updates.kiro2api_kiro_version; }
     
     let content = serde_json::to_string_pretty(&current)
         .map_err(|e| format!("序列化失败: {}", e))?;

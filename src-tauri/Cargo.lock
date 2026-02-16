@@ -2259,12 +2259,13 @@ dependencies = [
 
 [[package]]
 name = "kiro-account-manager"
-version = "1.7.7"
+version = "1.8.2"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
  "chrono",
  "ciborium",
+ "cookie",
  "dirs 5.0.1",
  "hex",
  "log",

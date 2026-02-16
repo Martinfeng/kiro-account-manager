@@ -2,6 +2,7 @@
   "nav.home": "Главная",
   "nav.accounts": "Аккаунты",
   "nav.kiroConfig": "Настройка правил",
+  "nav.kiro2api": "Kiro2API",
   "nav.desktopOAuth": "Авторизация",
   "nav.socialIdC": "Google/GitHub/IdC",
   "nav.webOAuth": "Веб-авторизация",

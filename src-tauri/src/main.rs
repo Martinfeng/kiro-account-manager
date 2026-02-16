@@ -33,6 +33,7 @@ use commands::account_cmd::{
 };
 use commands::app_settings_cmd::*;
 use commands::auth_cmd::*;
+use commands::kiro2api_cmd::*;
 use commands::kiro_settings_cmd::*;
 use commands::machine_guid_cmd::*;
 use commands::mcp_cmd::*;
@@ -83,6 +84,7 @@ fn main() {
             store: Mutex::new(AccountStore::new()),
             auth: AuthState::new(),
             pending_login: Mutex::new(None),
+            kiro2api: Mutex::new(None),
         })
         .invoke_handler(tauri::generate_handler![
             // 账号命令
@@ -118,6 +120,10 @@ fn main() {
             get_kiro_settings,
             set_kiro_proxy,
             set_kiro_model,
+            // Kiro2API 服务命令
+            get_kiro2api_status,
+            start_kiro2api_service,
+            stop_kiro2api_service,
             // 应用设置命令
             get_app_settings,
             save_app_settings,
