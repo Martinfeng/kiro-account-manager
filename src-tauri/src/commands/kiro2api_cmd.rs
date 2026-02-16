@@ -32,6 +32,8 @@ pub struct Kiro2ApiStatus {
     pub message: Option<String>,
 }
 
+const KIRO2API_REPO_URL: &str = "https://github.com/lulistart/Kiro2api-Node.git";
+
 fn default_project_candidates() -> Vec<PathBuf> {
     let home = std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
@@ -48,6 +50,13 @@ fn default_project_candidates() -> Vec<PathBuf> {
 
 fn is_valid_project_dir(project_dir: &PathBuf) -> bool {
     project_dir.exists() && project_dir.join("src").join("index.js").exists()
+}
+
+fn has_explicit_project_path(project_path: &Option<String>) -> bool {
+    project_path
+        .as_ref()
+        .map(|s| !s.trim().is_empty())
+        .unwrap_or(false)
 }
 
 fn resolve_project_path(project_path: Option<String>) -> Result<String, String> {
@@ -102,18 +111,22 @@ fn default_node_data_dir() -> PathBuf {
     data_dir.join(".kiro-account-manager").join("kiro2api-node")
 }
 
-fn node_candidates() -> Vec<PathBuf> {
+fn command_in_path_candidates(name: &str) -> Vec<PathBuf> {
     let mut candidates = Vec::new();
+    if let Some(path_var) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&path_var) {
+            candidates.push(dir.join(name));
+        }
+    }
+    candidates
+}
+
+fn node_candidates() -> Vec<PathBuf> {
+    let mut candidates = command_in_path_candidates("node");
 
     if let Ok(custom) = std::env::var("NODE_BINARY") {
         if !custom.trim().is_empty() {
-            candidates.push(PathBuf::from(custom.trim()));
-        }
-    }
-
-    if let Some(path_var) = std::env::var_os("PATH") {
-        for dir in std::env::split_paths(&path_var) {
-            candidates.push(dir.join("node"));
+            candidates.insert(0, PathBuf::from(custom.trim()));
         }
     }
 
@@ -132,6 +145,45 @@ fn node_candidates() -> Vec<PathBuf> {
     candidates
 }
 
+fn npm_candidates() -> Vec<PathBuf> {
+    let mut candidates = command_in_path_candidates("npm");
+
+    if let Ok(custom) = std::env::var("NPM_BINARY") {
+        if !custom.trim().is_empty() {
+            candidates.insert(0, PathBuf::from(custom.trim()));
+        }
+    }
+
+    for p in [
+        "/opt/homebrew/bin/npm",
+        "/usr/local/bin/npm",
+        "/opt/homebrew/opt/node/bin/npm",
+        "/opt/homebrew/opt/node@22/bin/npm",
+        "/opt/homebrew/opt/node@20/bin/npm",
+        "/usr/bin/npm",
+    ] {
+        candidates.push(PathBuf::from(p));
+    }
+
+    candidates
+}
+
+fn git_candidates() -> Vec<PathBuf> {
+    let mut candidates = command_in_path_candidates("git");
+
+    if let Ok(custom) = std::env::var("GIT_BINARY") {
+        if !custom.trim().is_empty() {
+            candidates.insert(0, PathBuf::from(custom.trim()));
+        }
+    }
+
+    for p in ["/usr/bin/git", "/opt/homebrew/bin/git", "/usr/local/bin/git"] {
+        candidates.push(PathBuf::from(p));
+    }
+
+    candidates
+}
+
 fn resolve_node_binary() -> Result<PathBuf, String> {
     let mut checked = Vec::new();
     for candidate in node_candidates() {
@@ -144,6 +196,38 @@ fn resolve_node_binary() -> Result<PathBuf, String> {
 
     Err(format!(
         "Node.js executable not found. Install Node.js or set NODE_BINARY. Checked: {}",
+        checked.join(", ")
+    ))
+}
+
+fn resolve_npm_binary() -> Result<PathBuf, String> {
+    let mut checked = Vec::new();
+    for candidate in npm_candidates() {
+        let p = candidate.as_path();
+        checked.push(p.to_string_lossy().to_string());
+        if p.exists() && p.is_file() {
+            return Ok(candidate);
+        }
+    }
+
+    Err(format!(
+        "npm executable not found. Install Node.js or set NPM_BINARY. Checked: {}",
+        checked.join(", ")
+    ))
+}
+
+fn resolve_git_binary() -> Result<PathBuf, String> {
+    let mut checked = Vec::new();
+    for candidate in git_candidates() {
+        let p = candidate.as_path();
+        checked.push(p.to_string_lossy().to_string());
+        if p.exists() && p.is_file() {
+            return Ok(candidate);
+        }
+    }
+
+    Err(format!(
+        "git executable not found. Install git or set GIT_BINARY. Checked: {}",
         checked.join(", ")
     ))
 }
@@ -171,6 +255,79 @@ fn merged_path_for_child() -> String {
         .ok()
         .and_then(|v| v.into_string().ok())
         .unwrap_or_else(|| "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin".to_string())
+}
+
+fn run_command_capture(cmd: &mut Command, display_name: &str) -> Result<(), String> {
+    let output = cmd
+        .output()
+        .map_err(|e| format!("{} failed to execute: {}", display_name, e))?;
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let code = output
+        .status
+        .code()
+        .map(|c| c.to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+    Err(format!(
+        "{} failed (code {}): stderr='{}' stdout='{}'",
+        display_name, code, stderr, stdout
+    ))
+}
+
+fn ensure_project_dependencies(project_dir: &PathBuf) -> Result<(), String> {
+    if project_dir.join("node_modules").exists() {
+        return Ok(());
+    }
+
+    let npm_binary = resolve_npm_binary()?;
+    let mut install_cmd = Command::new(&npm_binary);
+    install_cmd
+        .arg("ci")
+        .arg("--omit=dev")
+        .current_dir(project_dir)
+        .env("PATH", merged_path_for_child())
+        .stdin(Stdio::null());
+
+    run_command_capture(&mut install_cmd, "npm ci")
+}
+
+fn bootstrap_project(data_dir: &PathBuf) -> Result<String, String> {
+    let project_dir = data_dir.join("Kiro2api-Node");
+
+    if is_valid_project_dir(&project_dir) {
+        ensure_project_dependencies(&project_dir)?;
+        return Ok(project_dir.to_string_lossy().to_string());
+    }
+
+    if project_dir.exists() {
+        fs::remove_dir_all(&project_dir)
+            .map_err(|e| format!("remove old bootstrap project failed: {}", e))?;
+    }
+
+    fs::create_dir_all(data_dir)
+        .map_err(|e| format!("create bootstrap data dir failed: {}", e))?;
+
+    let git_binary = resolve_git_binary()?;
+    let mut clone_cmd = Command::new(&git_binary);
+    clone_cmd
+        .arg("clone")
+        .arg("--depth")
+        .arg("1")
+        .arg(KIRO2API_REPO_URL)
+        .arg(&project_dir)
+        .env("PATH", merged_path_for_child())
+        .stdin(Stdio::null());
+
+    run_command_capture(&mut clone_cmd, "git clone Kiro2api-Node")?;
+    ensure_project_dependencies(&project_dir)?;
+
+    Ok(project_dir.to_string_lossy().to_string())
 }
 
 fn cleanup_if_exited(state: &mut Option<Kiro2ApiRuntime>) {
@@ -259,19 +416,30 @@ pub async fn start_kiro2api_service(
         }
     }
 
-    let project_path = resolve_project_path(params.project_path)?;
+    let data_dir = params
+        .data_dir
+        .as_ref()
+        .map(PathBuf::from)
+        .unwrap_or_else(default_node_data_dir);
+
+    let project_path = match resolve_project_path(params.project_path.clone()) {
+        Ok(path) => path,
+        Err(original_error) => {
+            if has_explicit_project_path(&params.project_path) {
+                return Err(original_error);
+            }
+            bootstrap_project(&data_dir)?
+        }
+    };
     let project_dir = PathBuf::from(&project_path);
     if !is_valid_project_dir(&project_dir) {
         return Err(format!("invalid Kiro2api-Node project path: {}", project_path));
     }
+    ensure_project_dependencies(&project_dir)?;
 
     let port = params.port.unwrap_or(8080);
     let api_key = params.api_key.unwrap_or_else(|| "sk-default-key".to_string());
     let admin_key = params.admin_key.unwrap_or_else(|| "admin-default-key".to_string());
-    let data_dir = params
-        .data_dir
-        .map(PathBuf::from)
-        .unwrap_or_else(default_node_data_dir);
     let region = params.region.unwrap_or_else(|| "us-east-1".to_string());
     let kiro_version = params.kiro_version.unwrap_or_else(|| "0.8.0".to_string());
     let shared_accounts_file = account_store_path();
