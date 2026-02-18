@@ -561,7 +561,7 @@ pub async fn start_kiro2api_service(
     let anthropic_compat_mode = params
         .anthropic_compat_mode
         .map(|s| s.trim().to_lowercase())
-        .filter(|s| s == "strict" || s == "balanced" || s == "relaxed")
+        .filter(|s| s == "strict" || s == "balanced" || s == "relaxed" || s == "hard-strict")
         .unwrap_or_else(|| "strict".to_string());
     let shared_accounts_file = account_store_path();
 

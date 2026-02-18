@@ -430,9 +430,10 @@ function Kiro2ApiManager() {
                 onChange={e => setField('anthropicCompatMode', e.target.value)}
                 className={`w-full px-3 py-2 rounded-lg border ${colors.cardBorder} ${colors.input} ${colors.text}`}
               >
-                <option value="strict">strict（默认，能力优先）</option>
+                <option value="strict">strict（推荐：先严格，再逐级兜底）</option>
                 <option value="balanced">balanced（中等兜底）</option>
                 <option value="relaxed">relaxed（最大兜底）</option>
+                <option value="hard-strict">hard-strict（仅轻量兼容）</option>
               </select>
             </label>
             <label className="space-y-1 md:col-span-2">
@@ -445,7 +446,7 @@ function Kiro2ApiManager() {
               />
             </label>
             <div className={`text-xs ${colors.textMuted} md:col-span-2`}>
-              `strict` 仅做轻量重试，尽量保留 tools/history/thinking；`relaxed` 才会启用单轮降级兜底。
+              `strict` 为 strict-first：仅在上游判定 malformed 时才逐级降级；`hard-strict` 才是最少兼容兜底。
             </div>
           </div>
           <button

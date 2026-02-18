@@ -25,7 +25,7 @@ export class KiroClient {
 
   getCompatMode() {
     const mode = this.coerceString(this.config?.anthropicCompatMode, '').trim().toLowerCase();
-    if (mode === 'strict' || mode === 'balanced' || mode === 'relaxed') {
+    if (mode === 'strict' || mode === 'balanced' || mode === 'relaxed' || mode === 'hard-strict') {
       return mode;
     }
     return 'strict';
@@ -33,13 +33,14 @@ export class KiroClient {
 
   getFallbackModes() {
     const mode = this.getCompatMode();
-    if (mode === 'strict') {
-      // strict: keep capability/semantics first, only apply the lightest schema compaction retry
+    if (mode === 'hard-strict') {
+      // hard-strict: fail fast with minimal compatibility intervention
       return ['primary', 'compact-tools'];
     }
     if (mode === 'balanced') {
       return ['primary', 'compact-tools', 'no-tools', 'trim-history'];
     }
+    // strict / relaxed: strict-first strategy, then progressively relax only when upstream reports malformed request
     return ['primary', 'compact-tools', 'no-tools', 'trim-history', 'minimal-history', 'single-turn'];
   }
 

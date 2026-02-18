@@ -76,6 +76,7 @@ export function createAdminRouter(state) {
     res.json({
       status: 'running',
       version: '1.0.0',
+      anthropicCompatMode: state.config?.anthropicCompatMode || 'strict',
       uptimeSecs: Math.floor((Date.now() - state.startTime) / 1000),
       pool: stats,
       sharedMode: state.accountPool.isSharedMode ? state.accountPool.isSharedMode() : false,
