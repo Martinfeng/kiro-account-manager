@@ -1003,14 +1003,15 @@ export class DatabaseManager {
     `);
 
     const defaultMappings = [
-      ['^claude[-_.]?sonnet[-_.]?4[-_.]?6[-_.]?20260217[-_.]?thinking$', 'claude-sonnet-4-6-20260217-thinking', 'regex', 160, 1],
-      ['^claude[-_.]?sonnet[-_.]?4[-_.]?6[-_.]?20260217$', 'claude-sonnet-4-6-20260217', 'regex', 150, 1],
-      ['claude[-_.]?sonnet[-_.]?4[-_.]?6(?:[-_.]\\d+)?', 'claude-sonnet-4-6-20260217-thinking', 'regex', 120, 1],
+      ['^claude-sonnet-4\\.6$', 'claude-sonnet-4.6', 'regex', 170, 1],
+      ['^claude[-_.]?sonnet[-_.]?4[-_.]?6[-_.]?20260217[-_.]?thinking$', 'claude-sonnet-4.6', 'regex', 160, 1],
+      ['^claude[-_.]?sonnet[-_.]?4[-_.]?6[-_.]?20260217$', 'claude-sonnet-4.6', 'regex', 150, 1],
+      ['claude[-_.]?sonnet[-_.]?4[-_.]?6(?:[-_.]\\d+)?', 'claude-sonnet-4.6', 'regex', 120, 1],
       ['claude[-_.]?sonnet[-_.]?4[-_.]?5(?:[-_.]\\d+)?', 'claude-sonnet-4-5-20250929', 'regex', 110, 1],
       ['claude[-_.]?opus[-_.]?4[-_.]?6(?:[-_.]\\d+)?', 'claude-opus-4.6', 'regex', 120, 1],
       ['claude[-_.]?opus[-_.]?4[-_.]?5(?:[-_.]\\d+)?', 'claude-opus-4-5-20251101', 'regex', 110, 1],
       ['claude[-_.]?haiku[-_.]?4[-_.]?5(?:[-_.]\\d+)?', 'claude-haiku-4-5-20251001', 'regex', 110, 1],
-      ['sonnet', 'claude-sonnet-4-6-20260217-thinking', 'contains', 10, 1],
+      ['sonnet', 'claude-sonnet-4.6', 'contains', 10, 1],
       ['opus', 'claude-opus-4.6', 'contains', 10, 1],
       ['haiku', 'claude-haiku-4-5-20251001', 'contains', 10, 1]
     ];

@@ -38,15 +38,16 @@ export async function migrateModels(dbManager, dataDir) {
 
       const defaultMappings = [
         // 精确/显式模型优先：保留显式请求 4.5 的能力
-        ['^claude[-_.]?sonnet[-_.]?4[-_.]?6[-_.]?20260217[-_.]?thinking$', 'claude-sonnet-4-6-20260217-thinking', 'regex', 160, 1],
-        ['^claude[-_.]?sonnet[-_.]?4[-_.]?6[-_.]?20260217$', 'claude-sonnet-4-6-20260217', 'regex', 150, 1],
-        ['claude[-_.]?sonnet[-_.]?4[-_.]?6(?:[-_.]\\d+)?', 'claude-sonnet-4-6-20260217-thinking', 'regex', 120, 1],
+        ['^claude-sonnet-4\\.6$', 'claude-sonnet-4.6', 'regex', 170, 1],
+        ['^claude[-_.]?sonnet[-_.]?4[-_.]?6[-_.]?20260217[-_.]?thinking$', 'claude-sonnet-4.6', 'regex', 160, 1],
+        ['^claude[-_.]?sonnet[-_.]?4[-_.]?6[-_.]?20260217$', 'claude-sonnet-4.6', 'regex', 150, 1],
+        ['claude[-_.]?sonnet[-_.]?4[-_.]?6(?:[-_.]\\d+)?', 'claude-sonnet-4.6', 'regex', 120, 1],
         ['claude[-_.]?sonnet[-_.]?4[-_.]?5(?:[-_.]\\d+)?', 'claude-sonnet-4-5-20250929', 'regex', 110, 1],
         ['claude[-_.]?opus[-_.]?4[-_.]?6(?:[-_.]\\d+)?', 'claude-opus-4.6', 'regex', 120, 1],
         ['claude[-_.]?opus[-_.]?4[-_.]?5(?:[-_.]\\d+)?', 'claude-opus-4-5-20251101', 'regex', 110, 1],
         ['claude[-_.]?haiku[-_.]?4[-_.]?5(?:[-_.]\\d+)?', 'claude-haiku-4-5-20251001', 'regex', 110, 1],
         // 默认语义映射：未带版本时走最新稳定模型
-        ['sonnet', 'claude-sonnet-4-6-20260217-thinking', 'contains', 10, 1],
+        ['sonnet', 'claude-sonnet-4.6', 'contains', 10, 1],
         ['opus', 'claude-opus-4.6', 'contains', 10, 1],
         ['haiku', 'claude-haiku-4-5-20251001', 'contains', 10, 1]
       ];
@@ -58,14 +59,15 @@ export async function migrateModels(dbManager, dataDir) {
       // 兼容升级：仅替换默认旧映射，不覆盖用户自定义映射
       insertedMappings += dbManager.db.prepare(`
         UPDATE model_mappings
-        SET internal_id = 'claude-sonnet-4-6-20260217-thinking', match_type = 'contains', priority = 10, enabled = 1
+        SET internal_id = 'claude-sonnet-4.6', match_type = 'contains', priority = 10, enabled = 1
         WHERE external_pattern = 'sonnet'
           AND match_type = 'contains'
           AND internal_id IN (
             'claude-sonnet-4.5',
             'claude-sonnet-4-5-20250929',
             'claude-sonnet-4.6',
-            'claude-sonnet-4-6-20260217'
+            'claude-sonnet-4-6-20260217',
+            'claude-sonnet-4-6-20260217-thinking'
           )
       `).run().changes;
 
@@ -96,10 +98,50 @@ export async function migrateModels(dbManager, dataDir) {
 
       insertedMappings += dbManager.db.prepare(`
         UPDATE model_mappings
-        SET internal_id = 'claude-sonnet-4-6-20260217-thinking'
+        SET internal_id = 'claude-sonnet-4.6'
         WHERE external_pattern = 'claude[-_.]?sonnet[-_.]?4[-_.]?6(?:[-_.]\\d+)?'
           AND match_type = 'regex'
-          AND internal_id IN ('claude-sonnet-4.6', 'claude-sonnet-4-6-20260217')
+          AND internal_id IN (
+            'claude-sonnet-4.6',
+            'claude-sonnet-4-6-20260217',
+            'claude-sonnet-4-6-20260217-thinking'
+          )
+      `).run().changes;
+
+      insertedMappings += dbManager.db.prepare(`
+        UPDATE model_mappings
+        SET internal_id = 'claude-sonnet-4.6'
+        WHERE external_pattern = '^claude[-_.]?sonnet[-_.]?4[-_.]?6[-_.]?20260217[-_.]?thinking$'
+          AND match_type = 'regex'
+          AND internal_id IN (
+            'claude-sonnet-4.6',
+            'claude-sonnet-4-6-20260217',
+            'claude-sonnet-4-6-20260217-thinking'
+          )
+      `).run().changes;
+
+      insertedMappings += dbManager.db.prepare(`
+        UPDATE model_mappings
+        SET internal_id = 'claude-sonnet-4.6'
+        WHERE external_pattern = '^claude[-_.]?sonnet[-_.]?4[-_.]?6[-_.]?20260217$'
+          AND match_type = 'regex'
+          AND internal_id IN (
+            'claude-sonnet-4.6',
+            'claude-sonnet-4-6-20260217',
+            'claude-sonnet-4-6-20260217-thinking'
+          )
+      `).run().changes;
+
+      insertedMappings += dbManager.db.prepare(`
+        UPDATE model_mappings
+        SET internal_id = 'claude-sonnet-4.6', match_type = 'regex', priority = 170, enabled = 1
+        WHERE external_pattern = '^claude-sonnet-4\\.6$'
+          AND match_type = 'regex'
+          AND internal_id IN (
+            'claude-sonnet-4.6',
+            'claude-sonnet-4-6-20260217',
+            'claude-sonnet-4-6-20260217-thinking'
+          )
       `).run().changes;
 
       insertedMappings += dbManager.db.prepare(`
