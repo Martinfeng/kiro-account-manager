@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kiro2api-Node 管理面板</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- 工具函数 -->
+    <script src="./utils.js"></script>
+    <script src="./api.js"></script>
+    <script src="./ui.js"></script>
+    <!-- 服务层 -->
+    <script src="./services/accountsService.js"></script>
+    <script src="./services/logsService.js"></script>
+    <!-- React 组件 -->
+    <script type="text/babel" src="./components/LoginPage.js"></script>
+    <script type="text/babel" src="./components/StatsGrid.js"></script>
+    <script type="text/babel" src="./components/Charts.js"></script>
+    <script type="text/babel" src="./components/AnalyticsDashboard.js"></script>
+    <script type="text/babel" src="./components/TopNavBar.js"></script>
+    <script type="text/babel" src="./components/MainTabs.js"></script>
+    <script type="text/babel" src="./components/AccountsToolbar.js"></script>
+    <script type="text/babel" src="./components/LogsToolbar.js"></script>
+    <script type="text/babel" src="./components/SettingsPanel.js"></script>
+    <script type="text/babel" src="./components/AccountsTable.js"></script>
+    <script type="text/babel" src="./components/LogsTable.js"></script>
+    <script type="text/babel" src="./components/LoginContainer.js"></script>
+    <script type="text/babel" src="./components/AccountsTabShell.js"></script>
+    <script type="text/babel" src="./components/LogsTabShell.js"></script>
+    <script type="text/babel" src="./components/AnalyticsTabShell.js"></script>
+    <script type="text/babel" src="./components/SettingsTabShell.js"></script>
+    <script type="text/babel" src="./components/TabsCardShell.js"></script>
+    <script type="text/babel" src="./components/MainPanelShell.js"></script>
+    <script type="text/babel" src="./components/ToastContainer.js"></script>
+    <script type="text/babel" src="./components/modals/AddAccountModal.js"></script>
+    <script type="text/babel" src="./components/modals/ImportAccountsModal.js"></script>
+    <script type="text/babel" src="./components/modals/CreateApiKeyModal.js"></script>
+    <script type="text/babel" src="./components/modals/RenameApiKeyModal.js"></script>
+    <script type="text/babel" src="./components/modals/AddModelModal.js"></script>
+    <script type="text/babel" src="./components/modals/EditModelModal.js"></script>
+    <script type="text/babel" src="./components/modals/AddMappingModal.js"></script>
+    <script type="text/babel" src="./components/modals/EditMappingModal.js"></script>
+    <script type="text/babel" src="./components/modals/ModalsRoot.js"></script>
+    <script type="text/babel" src="./components/PageShell.js"></script>
+    <!-- 样式 -->
+    <link rel="stylesheet" href="./styles/app.css">
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <div id="app"></div>
+    <script type="text/babel" src="./app.js"></script>
+</body>
+</html>

@@ -12,7 +12,7 @@ function Settings() {
   const { t } = useI18n()
   const isDark = theme === 'dark'
   
-  const [aiModel, setAiModel] = useState('claude-sonnet-4.5')
+  const [aiModel, setAiModel] = useState('claude-sonnet-4-6-20260217-thinking')
   const [lockModel, setLockModel] = useState(true)
   const [autoRefresh, setAutoRefresh] = useState(true)
   const [autoRefreshInterval, setAutoRefreshInterval] = useState(50) // 分钟
@@ -59,7 +59,7 @@ function Settings() {
         const proxy = kiroSettings.httpProxy || ''
         setHttpProxy(proxy)
         setOriginalProxy(proxy)
-        setAiModel(kiroSettings.modelSelection || 'claude-sonnet-4.5')
+        setAiModel(kiroSettings.modelSelection || 'claude-sonnet-4-6-20260217-thinking')
       }
       // 从应用设置读取
       if (appSettings) {
@@ -427,9 +427,13 @@ function Settings() {
                 disabled={savingModel}
                 className={`w-full px-4 py-3 border rounded-xl ${colors.text} ${colors.input} ${colors.inputFocus} focus:ring-2 appearance-none cursor-pointer disabled:opacity-50 transition-all`}
               >
-                <option value="claude-sonnet-4.5">Claude Sonnet 4.5 - 1.3x (⭐ {t('common.recommended')})</option>
+                <option value="claude-sonnet-4-6-20260217-thinking">Claude Sonnet 4.6 Thinking - 1.3x (⭐ {t('common.recommended')})</option>
+                <option value="claude-sonnet-4-6-20260217">Claude Sonnet 4.6 - 1.3x</option>
+                <option value="claude-sonnet-4.6">Claude Sonnet 4.6 (Legacy Alias) - 1.3x</option>
+                <option value="claude-sonnet-4.5">Claude Sonnet 4.5 - 1.3x</option>
                 <option value="claude-sonnet-4">Claude Sonnet 4 - 1.3x</option>
                 <option value="claude-haiku-4.5">Claude Haiku 4.5 - 0.4x</option>
+                <option value="claude-opus-4.6">Claude Opus 4.6 - 2.2x</option>
                 <option value="claude-opus-4.5">Claude Opus 4.5 - 2.2x</option>
               </select>
               <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none">

@@ -303,7 +303,7 @@ function Kiro2ApiManager() {
               <input
                 value={form.projectPath}
                 onChange={e => setField('projectPath', e.target.value)}
-                placeholder="留空自动探测: ~/project/Kiro2api-Node"
+                placeholder="留空使用内置离线引擎（推荐），或填写本地 Kiro2api-Node 路径"
                 className={`w-full px-3 py-2 rounded-lg border ${colors.cardBorder} ${colors.input} ${colors.text}`}
               />
             </label>

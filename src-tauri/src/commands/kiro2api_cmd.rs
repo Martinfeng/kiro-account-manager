@@ -1,9 +1,11 @@
 use crate::state::{AppState, Kiro2ApiRuntime};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, OpenOptions};
-use std::path::PathBuf;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use tauri::State;
+use tauri::{AppHandle, Manager, State};
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -32,7 +34,8 @@ pub struct Kiro2ApiStatus {
     pub message: Option<String>,
 }
 
-const KIRO2API_REPO_URL: &str = "https://github.com/lulistart/Kiro2api-Node.git";
+const BUNDLED_PROJECT_RELATIVE: &str = "offline/kiro2api-node";
+const BUNDLED_NODE_RELATIVE_MAC_ARM64: &str = "offline/node/darwin-aarch64/bin/node";
 
 fn default_project_candidates() -> Vec<PathBuf> {
     let home = std::env::var("HOME")
@@ -48,47 +51,29 @@ fn default_project_candidates() -> Vec<PathBuf> {
     ]
 }
 
-fn is_valid_project_dir(project_dir: &PathBuf) -> bool {
+fn is_valid_project_dir(project_dir: &Path) -> bool {
     project_dir.exists() && project_dir.join("src").join("index.js").exists()
 }
 
-fn has_explicit_project_path(project_path: &Option<String>) -> bool {
-    project_path
-        .as_ref()
-        .map(|s| !s.trim().is_empty())
-        .unwrap_or(false)
-}
-
-fn resolve_project_path(project_path: Option<String>) -> Result<String, String> {
-    let mut provided_error: Option<String> = None;
-
+fn resolve_external_project_path(project_path: Option<String>) -> Result<Option<String>, String> {
     if let Some(path) = project_path {
         let trimmed = path.trim();
         if !trimmed.is_empty() {
             let project_dir = PathBuf::from(trimmed);
             if is_valid_project_dir(&project_dir) {
-                return Ok(trimmed.to_string());
+                return Ok(Some(trimmed.to_string()));
             }
-            provided_error = Some(format!("project path not found: {}", trimmed));
+            return Err(format!("project path not found: {}", trimmed));
         }
     }
 
     for candidate in default_project_candidates() {
         if is_valid_project_dir(&candidate) {
-            return Ok(candidate.to_string_lossy().to_string());
+            return Ok(Some(candidate.to_string_lossy().to_string()));
         }
     }
 
-    let checked = default_project_candidates()
-        .into_iter()
-        .map(|p| p.to_string_lossy().to_string())
-        .collect::<Vec<_>>()
-        .join(", ");
-    let prefix = provided_error.unwrap_or_else(|| "Kiro2api-Node project not found.".to_string());
-    Err(format!(
-        "{} Please set project path in Kiro2API tab. Checked: {}",
-        prefix, checked
-    ))
+    Ok(None)
 }
 
 fn account_store_path() -> PathBuf {
@@ -121,16 +106,78 @@ fn command_in_path_candidates(name: &str) -> Vec<PathBuf> {
     candidates
 }
 
-fn node_candidates() -> Vec<PathBuf> {
-    let mut candidates = command_in_path_candidates("node");
+fn resource_dir_candidates(app_handle: &AppHandle) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
 
-    if let Ok(custom) = std::env::var("NODE_BINARY") {
-        if !custom.trim().is_empty() {
-            candidates.insert(0, PathBuf::from(custom.trim()));
+    if let Ok(resource_dir) = app_handle.path().resource_dir() {
+        candidates.push(resource_dir);
+    }
+
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(exe_dir) = exe.parent() {
+            candidates.push(exe_dir.to_path_buf());
+            candidates.push(exe_dir.join("../Resources"));
+            candidates.push(exe_dir.join("resources"));
         }
     }
 
-    // macOS 常见安装路径（GUI 启动时 PATH 经常不包含 Homebrew）
+    candidates
+}
+
+fn bundled_project_candidates(app_handle: &AppHandle) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    for base in resource_dir_candidates(app_handle) {
+        candidates.push(base.join(BUNDLED_PROJECT_RELATIVE));
+        candidates.push(base.join("kiro2api-node"));
+        candidates.push(base.join("resources").join(BUNDLED_PROJECT_RELATIVE));
+        candidates.push(base.join("resources").join("kiro2api-node"));
+    }
+    candidates
+}
+
+fn resolve_bundled_project_path(app_handle: &AppHandle) -> Result<String, String> {
+    let mut checked = Vec::new();
+    for candidate in bundled_project_candidates(app_handle) {
+        checked.push(candidate.to_string_lossy().to_string());
+        if is_valid_project_dir(&candidate) {
+            return Ok(candidate.to_string_lossy().to_string());
+        }
+    }
+
+    Err(format!(
+        "Bundled Kiro2API project not found in app resources. Reinstall with offline DMG. Checked: {}",
+        checked.join(", ")
+    ))
+}
+
+fn bundled_node_candidates(app_handle: &AppHandle) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    for base in resource_dir_candidates(app_handle) {
+        candidates.push(base.join(BUNDLED_NODE_RELATIVE_MAC_ARM64));
+        candidates.push(base.join("node").join("darwin-aarch64").join("bin").join("node"));
+        candidates.push(base.join("offline").join("node").join("darwin-aarch64").join("node"));
+        candidates.push(
+            base.join("resources")
+                .join("node")
+                .join("darwin-aarch64")
+                .join("bin")
+                .join("node"),
+        );
+        candidates.push(
+            base.join("resources")
+                .join("offline")
+                .join("node")
+                .join("darwin-aarch64")
+                .join("node"),
+        );
+        candidates.push(base.join("resources").join(BUNDLED_NODE_RELATIVE_MAC_ARM64));
+    }
+    candidates
+}
+
+fn system_node_candidates() -> Vec<PathBuf> {
+    let mut candidates = command_in_path_candidates("node");
+
     for p in [
         "/opt/homebrew/bin/node",
         "/usr/local/bin/node",
@@ -145,90 +192,114 @@ fn node_candidates() -> Vec<PathBuf> {
     candidates
 }
 
-fn npm_candidates() -> Vec<PathBuf> {
-    let mut candidates = command_in_path_candidates("npm");
-
-    if let Ok(custom) = std::env::var("NPM_BINARY") {
-        if !custom.trim().is_empty() {
-            candidates.insert(0, PathBuf::from(custom.trim()));
-        }
-    }
-
-    for p in [
-        "/opt/homebrew/bin/npm",
-        "/usr/local/bin/npm",
-        "/opt/homebrew/opt/node/bin/npm",
-        "/opt/homebrew/opt/node@22/bin/npm",
-        "/opt/homebrew/opt/node@20/bin/npm",
-        "/usr/bin/npm",
-    ] {
-        candidates.push(PathBuf::from(p));
-    }
-
-    candidates
-}
-
-fn git_candidates() -> Vec<PathBuf> {
-    let mut candidates = command_in_path_candidates("git");
-
-    if let Ok(custom) = std::env::var("GIT_BINARY") {
-        if !custom.trim().is_empty() {
-            candidates.insert(0, PathBuf::from(custom.trim()));
-        }
-    }
-
-    for p in ["/usr/bin/git", "/opt/homebrew/bin/git", "/usr/local/bin/git"] {
-        candidates.push(PathBuf::from(p));
-    }
-
-    candidates
-}
-
-fn resolve_node_binary() -> Result<PathBuf, String> {
+fn resolve_node_binary(app_handle: &AppHandle) -> Result<PathBuf, String> {
     let mut checked = Vec::new();
-    for candidate in node_candidates() {
-        let p = candidate.as_path();
-        checked.push(p.to_string_lossy().to_string());
-        if p.exists() && p.is_file() {
+
+    if let Ok(custom) = std::env::var("NODE_BINARY") {
+        let custom = custom.trim().to_string();
+        if !custom.is_empty() {
+            let candidate = PathBuf::from(&custom);
+            checked.push(custom);
+            if candidate.exists() && candidate.is_file() {
+                return Ok(candidate);
+            }
+        }
+    }
+
+    for candidate in bundled_node_candidates(app_handle) {
+        checked.push(candidate.to_string_lossy().to_string());
+        if candidate.exists() && candidate.is_file() {
+            return Ok(candidate);
+        }
+    }
+
+    for candidate in system_node_candidates() {
+        checked.push(candidate.to_string_lossy().to_string());
+        if candidate.exists() && candidate.is_file() {
             return Ok(candidate);
         }
     }
 
     Err(format!(
-        "Node.js executable not found. Install Node.js or set NODE_BINARY. Checked: {}",
+        "Node.js executable not found. Offline package should include a bundled node binary. Checked: {}",
         checked.join(", ")
     ))
 }
 
-fn resolve_npm_binary() -> Result<PathBuf, String> {
-    let mut checked = Vec::new();
-    for candidate in npm_candidates() {
-        let p = candidate.as_path();
-        checked.push(p.to_string_lossy().to_string());
-        if p.exists() && p.is_file() {
-            return Ok(candidate);
-        }
+#[cfg(unix)]
+fn ensure_executable(path: &Path) -> Result<(), String> {
+    let metadata = fs::metadata(path).map_err(|e| format!("read metadata failed: {}", e))?;
+    let mut permissions = metadata.permissions();
+    let mode = permissions.mode();
+    if mode & 0o111 == 0 {
+        permissions.set_mode(mode | 0o755);
+        fs::set_permissions(path, permissions)
+            .map_err(|e| format!("set execute permission failed: {}", e))?;
     }
-
-    Err(format!(
-        "npm executable not found. Install Node.js or set NPM_BINARY. Checked: {}",
-        checked.join(", ")
-    ))
+    Ok(())
 }
 
-fn resolve_git_binary() -> Result<PathBuf, String> {
-    let mut checked = Vec::new();
-    for candidate in git_candidates() {
-        let p = candidate.as_path();
-        checked.push(p.to_string_lossy().to_string());
-        if p.exists() && p.is_file() {
-            return Ok(candidate);
+#[cfg(not(unix))]
+fn ensure_executable(_path: &Path) -> Result<(), String> {
+    Ok(())
+}
+
+fn ensure_project_runtime_files(project_dir: &Path, is_bundled: bool) -> Result<(), String> {
+    if !is_valid_project_dir(project_dir) {
+        return Err(format!(
+            "invalid Kiro2api-Node project path: {}",
+            project_dir.to_string_lossy()
+        ));
+    }
+
+    if !project_dir.join("node_modules").exists() {
+        if is_bundled {
+            return Err(format!(
+                "bundled Kiro2API runtime is incomplete (node_modules missing): {}",
+                project_dir.to_string_lossy()
+            ));
+        }
+        return Err(format!(
+            "node_modules not found in '{}'. Leave project path empty to use bundled offline runtime.",
+            project_dir.to_string_lossy()
+        ));
+    }
+
+    Ok(())
+}
+
+fn resolve_project_for_start(
+    app_handle: &AppHandle,
+    project_path: Option<String>,
+) -> Result<(String, bool), String> {
+    if let Some(path) = project_path {
+        let trimmed = path.trim();
+        if !trimmed.is_empty() {
+            let explicit_dir = PathBuf::from(trimmed);
+            if is_valid_project_dir(&explicit_dir) {
+                return Ok((trimmed.to_string(), false));
+            }
+
+            let explicit_error = format!("project path not found: {}", trimmed);
+            return match resolve_bundled_project_path(app_handle) {
+                Ok(path) => Ok((path, true)),
+                Err(bundle_error) => Err(format!("{}; {}", explicit_error, bundle_error)),
+            };
         }
     }
 
+    let bundled_error = match resolve_bundled_project_path(app_handle) {
+        Ok(path) => return Ok((path, true)),
+        Err(e) => e,
+    };
+
+    if let Some(path) = resolve_external_project_path(None)? {
+        return Ok((path, false));
+    }
+
     Err(format!(
-        "git executable not found. Install git or set GIT_BINARY. Checked: {}",
-        checked.join(", ")
+        "{} No local Kiro2api-Node project found either.",
+        bundled_error
     ))
 }
 
@@ -255,79 +326,6 @@ fn merged_path_for_child() -> String {
         .ok()
         .and_then(|v| v.into_string().ok())
         .unwrap_or_else(|| "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin".to_string())
-}
-
-fn run_command_capture(cmd: &mut Command, display_name: &str) -> Result<(), String> {
-    let output = cmd
-        .output()
-        .map_err(|e| format!("{} failed to execute: {}", display_name, e))?;
-
-    if output.status.success() {
-        return Ok(());
-    }
-
-    let code = output
-        .status
-        .code()
-        .map(|c| c.to_string())
-        .unwrap_or_else(|| "unknown".to_string());
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-
-    Err(format!(
-        "{} failed (code {}): stderr='{}' stdout='{}'",
-        display_name, code, stderr, stdout
-    ))
-}
-
-fn ensure_project_dependencies(project_dir: &PathBuf) -> Result<(), String> {
-    if project_dir.join("node_modules").exists() {
-        return Ok(());
-    }
-
-    let npm_binary = resolve_npm_binary()?;
-    let mut install_cmd = Command::new(&npm_binary);
-    install_cmd
-        .arg("ci")
-        .arg("--omit=dev")
-        .current_dir(project_dir)
-        .env("PATH", merged_path_for_child())
-        .stdin(Stdio::null());
-
-    run_command_capture(&mut install_cmd, "npm ci")
-}
-
-fn bootstrap_project(data_dir: &PathBuf) -> Result<String, String> {
-    let project_dir = data_dir.join("Kiro2api-Node");
-
-    if is_valid_project_dir(&project_dir) {
-        ensure_project_dependencies(&project_dir)?;
-        return Ok(project_dir.to_string_lossy().to_string());
-    }
-
-    if project_dir.exists() {
-        fs::remove_dir_all(&project_dir)
-            .map_err(|e| format!("remove old bootstrap project failed: {}", e))?;
-    }
-
-    fs::create_dir_all(data_dir)
-        .map_err(|e| format!("create bootstrap data dir failed: {}", e))?;
-
-    let git_binary = resolve_git_binary()?;
-    let mut clone_cmd = Command::new(&git_binary);
-    clone_cmd
-        .arg("clone")
-        .arg("--depth")
-        .arg("1")
-        .arg(KIRO2API_REPO_URL)
-        .arg(&project_dir)
-        .env("PATH", merged_path_for_child())
-        .stdin(Stdio::null());
-
-    run_command_capture(&mut clone_cmd, "git clone Kiro2api-Node")?;
-    ensure_project_dependencies(&project_dir)?;
-
-    Ok(project_dir.to_string_lossy().to_string())
 }
 
 fn cleanup_if_exited(state: &mut Option<Kiro2ApiRuntime>) {
@@ -394,6 +392,7 @@ pub async fn get_kiro2api_status(state: State<'_, AppState>) -> Result<Kiro2ApiS
 
 #[tauri::command]
 pub async fn start_kiro2api_service(
+    app_handle: AppHandle,
     state: State<'_, AppState>,
     params: Option<Kiro2ApiStartParams>,
 ) -> Result<Kiro2ApiStatus, String> {
@@ -422,20 +421,11 @@ pub async fn start_kiro2api_service(
         .map(PathBuf::from)
         .unwrap_or_else(default_node_data_dir);
 
-    let project_path = match resolve_project_path(params.project_path.clone()) {
-        Ok(path) => path,
-        Err(original_error) => {
-            if has_explicit_project_path(&params.project_path) {
-                return Err(original_error);
-            }
-            bootstrap_project(&data_dir)?
-        }
-    };
+    let (project_path, is_bundled_project) = resolve_project_for_start(&app_handle, params.project_path.clone())
+        .map_err(|e| format!("{} You can also set a custom local project path in Kiro2API tab.", e))?;
+
     let project_dir = PathBuf::from(&project_path);
-    if !is_valid_project_dir(&project_dir) {
-        return Err(format!("invalid Kiro2api-Node project path: {}", project_path));
-    }
-    ensure_project_dependencies(&project_dir)?;
+    ensure_project_runtime_files(&project_dir, is_bundled_project)?;
 
     let port = params.port.unwrap_or(8080);
     let api_key = params.api_key.unwrap_or_else(|| "sk-default-key".to_string());
@@ -455,7 +445,9 @@ pub async fn start_kiro2api_service(
         .try_clone()
         .map_err(|e| format!("clone log file failed: {}", e))?;
 
-    let node_binary = resolve_node_binary()?;
+    let node_binary = resolve_node_binary(&app_handle)?;
+    ensure_executable(&node_binary)?;
+
     let mut cmd = Command::new(&node_binary);
     cmd.arg("src/index.js")
         .current_dir(&project_dir)
@@ -500,7 +492,6 @@ pub async fn start_kiro2api_service(
         });
     }
 
-    // 返回启动后的实时状态
     get_kiro2api_status(state).await
 }
 

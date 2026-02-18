@@ -1,0 +1,16 @@
+node_modules
+npm-debug.log
+.git
+.gitignore
+README.md
+UI.md
+data/accounts.json
+data/request_logs.json
+data/settings.json
+data/kiro.db
+data/kiro.db-shm
+data/kiro.db-wal
+data/
+data/*.backup.*
+.env
+logs/
