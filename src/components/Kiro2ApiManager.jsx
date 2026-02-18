@@ -166,7 +166,9 @@ function Kiro2ApiManager() {
     setError('')
     setSuccess('')
     try {
-      const res = await invoke('stop_kiro2api_service')
+      const res = await invoke('stop_kiro2api_service', {
+        port: Number(form.port) || DEFAULTS.port,
+      })
       setStatus(res)
       setServiceInfo(null)
       setSuccess('Kiro2API 已停止')

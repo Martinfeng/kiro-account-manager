@@ -5,6 +5,8 @@ use std::fs::{self, OpenOptions};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::thread;
+use std::time::Duration;
 use tauri::{AppHandle, Manager, State};
 
 #[derive(Debug, Clone, Deserialize)]
@@ -338,6 +340,126 @@ fn cleanup_if_exited(state: &mut Option<Kiro2ApiRuntime>) {
     }
 }
 
+#[cfg(unix)]
+fn list_listening_pids(port: u16) -> Result<Vec<u32>, String> {
+    let output = Command::new("lsof")
+        .args([
+            "-nP",
+            &format!("-iTCP:{}", port),
+            "-sTCP:LISTEN",
+            "-t",
+        ])
+        .output()
+        .map_err(|e| format!("failed to query listeners on port {}: {}", port, e))?;
+
+    if !output.status.success() {
+        // lsof exits with code 1 when no match
+        if output.status.code() == Some(1) {
+            return Ok(Vec::new());
+        }
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(format!(
+            "failed to query listeners on port {}: {}",
+            port, stderr
+        ));
+    }
+
+    let pids = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| line.trim().parse::<u32>().ok())
+        .collect::<Vec<_>>();
+    Ok(pids)
+}
+
+#[cfg(unix)]
+fn process_cmdline(pid: u32) -> Option<String> {
+    let output = Command::new("ps")
+        .args(["-p", &pid.to_string(), "-o", "command="])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+#[cfg(unix)]
+fn is_kiro2api_pid(pid: u32, project_dir: Option<&Path>) -> bool {
+    let cmd = match process_cmdline(pid) {
+        Some(v) => v.to_lowercase(),
+        None => return false,
+    };
+
+    let project_match = project_dir
+        .map(|p| cmd.contains(&p.to_string_lossy().to_lowercase()))
+        .unwrap_or(false);
+
+    let looks_like_kiro2api = cmd.contains("kiro2api")
+        || (cmd.contains("node") && cmd.contains("src/index.js"));
+
+    project_match || looks_like_kiro2api
+}
+
+#[cfg(unix)]
+fn kill_pid(pid: u32, signal: &str) {
+    let _ = Command::new("kill")
+        .args([signal, &pid.to_string()])
+        .status();
+}
+
+#[cfg(unix)]
+fn cleanup_stale_kiro2api_on_port(port: u16, project_dir: Option<&Path>) -> Result<(), String> {
+    let pids = list_listening_pids(port)?;
+    if pids.is_empty() {
+        return Ok(());
+    }
+
+    let mut kiro_pids = Vec::new();
+    let mut foreign_pids = Vec::new();
+    for pid in pids {
+        if is_kiro2api_pid(pid, project_dir) {
+            kiro_pids.push(pid);
+        } else {
+            foreign_pids.push(pid);
+        }
+    }
+
+    if !foreign_pids.is_empty() {
+        return Err(format!(
+            "port {} is already in use by non-Kiro2API process(es): {:?}",
+            port, foreign_pids
+        ));
+    }
+
+    for pid in &kiro_pids {
+        kill_pid(*pid, "-TERM");
+    }
+    thread::sleep(Duration::from_millis(400));
+
+    let still_listening = list_listening_pids(port)?;
+    for pid in still_listening {
+        if is_kiro2api_pid(pid, project_dir) {
+            kill_pid(pid, "-KILL");
+        }
+    }
+    thread::sleep(Duration::from_millis(200));
+
+    let final_pids = list_listening_pids(port)?;
+    if final_pids.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "failed to release port {} after terminating stale Kiro2API process(es): {:?}",
+            port, final_pids
+        ))
+    }
+}
+
+#[cfg(not(unix))]
+fn cleanup_stale_kiro2api_on_port(_port: u16, _project_dir: Option<&Path>) -> Result<(), String> {
+    Ok(())
+}
+
 async fn check_health(port: u16) -> bool {
     let url = format!("http://127.0.0.1:{}/health", port);
     match reqwest::get(url).await {
@@ -428,6 +550,8 @@ pub async fn start_kiro2api_service(
     ensure_project_runtime_files(&project_dir, is_bundled_project)?;
 
     let port = params.port.unwrap_or(8080);
+    cleanup_stale_kiro2api_on_port(port, Some(&project_dir))?;
+
     let api_key = params.api_key.unwrap_or_else(|| "sk-default-key".to_string());
     let admin_key = params.admin_key.unwrap_or_else(|| "admin-default-key".to_string());
     let region = params.region.unwrap_or_else(|| "us-east-1".to_string());
@@ -496,11 +620,17 @@ pub async fn start_kiro2api_service(
 }
 
 #[tauri::command]
-pub async fn stop_kiro2api_service(state: State<'_, AppState>) -> Result<Kiro2ApiStatus, String> {
+pub async fn stop_kiro2api_service(
+    state: State<'_, AppState>,
+    port: Option<u16>,
+) -> Result<Kiro2ApiStatus, String> {
+    let port = port.unwrap_or(8080);
     {
         let mut runtime = state.kiro2api.lock().map_err(|e| format!("lock failed: {}", e))?;
         // Dropping runtime triggers process termination in Kiro2ApiRuntime::drop.
         let _ = runtime.take();
     }
+    // If app was restarted, runtime state may be empty while stale listener still exists.
+    cleanup_stale_kiro2api_on_port(port, None)?;
     get_kiro2api_status(state).await
 }
