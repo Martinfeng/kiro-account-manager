@@ -499,10 +499,8 @@ pub async fn start_kiro2api_service(
 pub async fn stop_kiro2api_service(state: State<'_, AppState>) -> Result<Kiro2ApiStatus, String> {
     {
         let mut runtime = state.kiro2api.lock().map_err(|e| format!("lock failed: {}", e))?;
-        if let Some(mut current) = runtime.take() {
-            let _ = current.child.kill();
-            let _ = current.child.wait();
-        }
+        // Dropping runtime triggers process termination in Kiro2ApiRuntime::drop.
+        let _ = runtime.take();
     }
     get_kiro2api_status(state).await
 }

@@ -22,6 +22,15 @@ pub struct Kiro2ApiRuntime {
     pub shared_accounts_file: String,
 }
 
+impl Drop for Kiro2ApiRuntime {
+    fn drop(&mut self) {
+        // Ensure bundled Kiro2API process is terminated when app exits unexpectedly
+        // or when runtime state is dropped without an explicit stop command.
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
 pub struct AppState {
     pub store: Mutex<AccountStore>,
     pub auth: AuthState,
