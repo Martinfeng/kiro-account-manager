@@ -1,7 +1,7 @@
 {
   "name": "kiro-account-manager",
   "private": true,
-  "version": "1.8.2",
+  "version": "1.8.2-enhanced",
   "type": "module",
   "scripts": {
     "dev": "vite",
