@@ -38,10 +38,12 @@ async function startServer() {
       region: process.env.REGION || 'us-east-1',
       kiroVersion: process.env.KIRO_VERSION || '0.8.0',
       proxyUrl: process.env.PROXY_URL || null,
-      sharedAccountsFile: process.env.SHARED_ACCOUNTS_FILE || null
+      sharedAccountsFile: process.env.SHARED_ACCOUNTS_FILE || null,
+      anthropicCompatMode: process.env.ANTHROPIC_COMPAT_MODE || 'strict'
     };
 
     console.log('配置端口:', config.port);
+    console.log('Anthropic 兼容模式:', config.anthropicCompatMode);
     if (config.sharedAccountsFile) {
       console.log('共享账号池模式: 已启用');
       console.log('共享账号文件:', config.sharedAccountsFile);

@@ -12,6 +12,7 @@ const DEFAULTS = {
   proxyUrl: '',
   region: 'us-east-1',
   kiroVersion: '0.8.0',
+  anthropicCompatMode: 'strict',
 }
 
 const LEGACY_FIXED_PROJECT_PATH = '/Users/feng/project/Kiro2api-Node'
@@ -77,6 +78,7 @@ function Kiro2ApiManager() {
         proxyUrl: settings.kiro2apiProxyUrl || DEFAULTS.proxyUrl,
         region: settings.kiro2apiRegion || DEFAULTS.region,
         kiroVersion: settings.kiro2apiKiroVersion || DEFAULTS.kiroVersion,
+        anthropicCompatMode: settings.kiro2apiAnthropicCompatMode || DEFAULTS.anthropicCompatMode,
       })
     } catch (_) {
       // ignore
@@ -96,6 +98,7 @@ function Kiro2ApiManager() {
           kiro2apiProxyUrl: form.proxyUrl.trim(),
           kiro2apiRegion: form.region.trim() || DEFAULTS.region,
           kiro2apiKiroVersion: form.kiroVersion.trim() || DEFAULTS.kiroVersion,
+          kiro2apiAnthropicCompatMode: form.anthropicCompatMode || DEFAULTS.anthropicCompatMode,
         },
       })
       setSuccess('配置已保存')
@@ -170,6 +173,7 @@ function Kiro2ApiManager() {
           proxyUrl: form.proxyUrl.trim() || null,
           region: form.region.trim() || DEFAULTS.region,
           kiroVersion: form.kiroVersion.trim() || DEFAULTS.kiroVersion,
+          anthropicCompatMode: form.anthropicCompatMode || DEFAULTS.anthropicCompatMode,
         },
       })
       setStatus(res)
@@ -419,6 +423,18 @@ function Kiro2ApiManager() {
                 className={`w-full px-3 py-2 rounded-lg border ${colors.cardBorder} ${colors.input} ${colors.text}`}
               />
             </label>
+            <label className="space-y-1">
+              <div className={colors.textMuted}>Anthropic 兼容策略</div>
+              <select
+                value={form.anthropicCompatMode}
+                onChange={e => setField('anthropicCompatMode', e.target.value)}
+                className={`w-full px-3 py-2 rounded-lg border ${colors.cardBorder} ${colors.input} ${colors.text}`}
+              >
+                <option value="strict">strict（默认，能力优先）</option>
+                <option value="balanced">balanced（中等兜底）</option>
+                <option value="relaxed">relaxed（最大兜底）</option>
+              </select>
+            </label>
             <label className="space-y-1 md:col-span-2">
               <div className={colors.textMuted}>代理 (可选)</div>
               <input
@@ -428,6 +444,9 @@ function Kiro2ApiManager() {
                 className={`w-full px-3 py-2 rounded-lg border ${colors.cardBorder} ${colors.input} ${colors.text}`}
               />
             </label>
+            <div className={`text-xs ${colors.textMuted} md:col-span-2`}>
+              `strict` 仅做轻量重试，尽量保留 tools/history/thinking；`relaxed` 才会启用单轮降级兜底。
+            </div>
           </div>
           <button
             onClick={saveSettings}

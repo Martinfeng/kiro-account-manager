@@ -20,6 +20,7 @@ pub struct Kiro2ApiStartParams {
     pub region: Option<String>,
     pub kiro_version: Option<String>,
     pub proxy_url: Option<String>,
+    pub anthropic_compat_mode: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -527,6 +528,7 @@ pub async fn start_kiro2api_service(
         region: None,
         kiro_version: None,
         proxy_url: None,
+        anthropic_compat_mode: None,
     });
 
     {
@@ -556,6 +558,11 @@ pub async fn start_kiro2api_service(
     let admin_key = params.admin_key.unwrap_or_else(|| "admin-default-key".to_string());
     let region = params.region.unwrap_or_else(|| "us-east-1".to_string());
     let kiro_version = params.kiro_version.unwrap_or_else(|| "0.8.0".to_string());
+    let anthropic_compat_mode = params
+        .anthropic_compat_mode
+        .map(|s| s.trim().to_lowercase())
+        .filter(|s| s == "strict" || s == "balanced" || s == "relaxed")
+        .unwrap_or_else(|| "strict".to_string());
     let shared_accounts_file = account_store_path();
 
     fs::create_dir_all(&data_dir).map_err(|e| format!("create data dir failed: {}", e))?;
@@ -582,6 +589,7 @@ pub async fn start_kiro2api_service(
         .env("DATA_DIR", data_dir.to_string_lossy().to_string())
         .env("REGION", region)
         .env("KIRO_VERSION", kiro_version)
+        .env("ANTHROPIC_COMPAT_MODE", anthropic_compat_mode)
         .env(
             "SHARED_ACCOUNTS_FILE",
             shared_accounts_file.to_string_lossy().to_string(),

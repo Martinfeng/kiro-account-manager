@@ -25,6 +25,7 @@ pub struct AppSettings {
     pub kiro2api_proxy_url: Option<String>,
     pub kiro2api_region: Option<String>,
     pub kiro2api_kiro_version: Option<String>,
+    pub kiro2api_anthropic_compat_mode: Option<String>,
 }
 
 fn get_app_settings_path() -> PathBuf {
@@ -78,6 +79,7 @@ fn save_app_settings_inner(updates: AppSettings) -> Result<(), String> {
     if updates.kiro2api_proxy_url.is_some() { current.kiro2api_proxy_url = updates.kiro2api_proxy_url; }
     if updates.kiro2api_region.is_some() { current.kiro2api_region = updates.kiro2api_region; }
     if updates.kiro2api_kiro_version.is_some() { current.kiro2api_kiro_version = updates.kiro2api_kiro_version; }
+    if updates.kiro2api_anthropic_compat_mode.is_some() { current.kiro2api_anthropic_compat_mode = updates.kiro2api_anthropic_compat_mode; }
     
     let content = serde_json::to_string_pretty(&current)
         .map_err(|e| format!("序列化失败: {}", e))?;
