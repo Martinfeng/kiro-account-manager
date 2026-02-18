@@ -89,7 +89,7 @@ jobs:
               grep -v "^- ci:" | \
               grep -v "^- chore:" | \
               grep -v "^- style:" | \
-              grep -v "^- test:" >> release_notes.md
+              grep -v "^- test:" >> release_notes.md || true
           else
             # 如果没有上一个 tag，获取最近 20 个 commits
             git log -20 --pretty=format:"- %s" --no-merges | \
@@ -97,7 +97,7 @@ jobs:
               grep -v "^- ci:" | \
               grep -v "^- chore:" | \
               grep -v "^- style:" | \
-              grep -v "^- test:" >> release_notes.md
+              grep -v "^- test:" >> release_notes.md || true
           fi
           
           echo "" >> release_notes.md
