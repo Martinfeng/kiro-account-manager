@@ -37,7 +37,9 @@
   "plugins": {
     "deep-link": {
       "desktop": {
-        "schemes": ["kiro"]
+        "schemes": [
+          "kiro"
+        ]
       }
     },
     "updater": {
@@ -52,9 +54,7 @@
     "createUpdaterArtifacts": false,
     "category": "DeveloperTool",
     "resources": [
-      "resources/offline/kiro2api-node",
-      "resources/offline/node/darwin-aarch64/bin/node",
-      "resources/offline/node/darwin-aarch64/LICENSE"
+      "resources/offline/kiro-rs/darwin-aarch64/kiro-rs"
     ],
     "copyright": "© 2025 hj01857655",
     "icon": [
@@ -70,7 +70,10 @@
         "installMode": "perMachine",
         "installerIcon": "icons/icon.ico",
         "displayLanguageSelector": true,
-        "languages": ["SimpChinese", "English"]
+        "languages": [
+          "SimpChinese",
+          "English"
+        ]
       }
     },
     "macOS": {

@@ -20,6 +20,7 @@ pub struct Kiro2ApiRuntime {
     pub project_path: String,
     pub log_path: String,
     pub shared_accounts_file: String,
+    pub api_key: String,
 }
 
 impl Drop for Kiro2ApiRuntime {

@@ -11,11 +11,8 @@ const DEFAULTS = {
   adminKey: 'admin-default-key',
   proxyUrl: '',
   region: 'us-east-1',
-  kiroVersion: '0.8.0',
-  anthropicCompatMode: 'strict',
+  kiroVersion: '0.9.2',
 }
-
-const LEGACY_FIXED_PROJECT_PATH = '/Users/feng/project/Kiro2api-Node'
 
 function Kiro2ApiManager() {
   const { theme, colors } = useTheme()
@@ -32,15 +29,14 @@ function Kiro2ApiManager() {
     logPath: null,
     sharedAccountsFile: null,
   })
-  const [serviceInfo, setServiceInfo] = useState(null)
-  const [accounts, setAccounts] = useState([])
-  const [strategy, setStrategy] = useState('round-robin')
+  const [credentials, setCredentials] = useState([])
+  const [summary, setSummary] = useState({ total: 0, available: 0, currentId: null })
+  const [loadBalancingMode, setLoadBalancingMode] = useState('priority')
   const [saving, setSaving] = useState(false)
   const [starting, setStarting] = useState(false)
   const [stopping, setStopping] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
-  const [recoveringAll, setRecoveringAll] = useState(false)
-  const [recoveringIds, setRecoveringIds] = useState([])
+  const [actioningIds, setActioningIds] = useState([])
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
 
@@ -48,7 +44,6 @@ function Kiro2ApiManager() {
     const port = form.port || status.port || 8080
     return `http://127.0.0.1:${port}`
   }, [form.port, status.port])
-  const cooldownCount = useMemo(() => accounts.filter(a => a.status === 'cooldown').length, [accounts])
 
   const setField = (key, value) => {
     setForm(prev => ({ ...prev, [key]: value }))
@@ -57,7 +52,7 @@ function Kiro2ApiManager() {
   const parseError = async (res, fallback = '请求失败') => {
     try {
       const data = await res.json()
-      return data?.error || fallback
+      return data?.error?.message || data?.message || fallback
     } catch (_) {
       return fallback
     }
@@ -66,19 +61,14 @@ function Kiro2ApiManager() {
   const loadSettings = async () => {
     try {
       const settings = await invoke('get_app_settings').catch(() => ({}))
-      const rawPath = settings.kiro2apiProjectPath || ''
-      // 兼容旧版本写死的路径，自动降级为空以触发后端自动探测
-      const projectPath = rawPath === LEGACY_FIXED_PROJECT_PATH ? '' : rawPath
-
       setForm({
-        projectPath,
+        projectPath: settings.kiro2apiProjectPath || DEFAULTS.projectPath,
         port: settings.kiro2apiPort || DEFAULTS.port,
         apiKey: settings.kiro2apiApiKey || DEFAULTS.apiKey,
         adminKey: settings.kiro2apiAdminKey || DEFAULTS.adminKey,
         proxyUrl: settings.kiro2apiProxyUrl || DEFAULTS.proxyUrl,
         region: settings.kiro2apiRegion || DEFAULTS.region,
         kiroVersion: settings.kiro2apiKiroVersion || DEFAULTS.kiroVersion,
-        anthropicCompatMode: settings.kiro2apiAnthropicCompatMode || DEFAULTS.anthropicCompatMode,
       })
     } catch (_) {
       // ignore
@@ -88,17 +78,15 @@ function Kiro2ApiManager() {
   const saveSettings = async () => {
     setSaving(true)
     try {
-      const projectPath = form.projectPath.trim()
       await invoke('save_app_settings', {
         settings: {
-          kiro2apiProjectPath: projectPath || null,
+          kiro2apiProjectPath: form.projectPath.trim() || null,
           kiro2apiPort: Number(form.port) || DEFAULTS.port,
-          kiro2apiApiKey: form.apiKey.trim(),
-          kiro2apiAdminKey: form.adminKey.trim(),
+          kiro2apiApiKey: form.apiKey.trim() || DEFAULTS.apiKey,
+          kiro2apiAdminKey: form.adminKey.trim() || DEFAULTS.adminKey,
           kiro2apiProxyUrl: form.proxyUrl.trim(),
           kiro2apiRegion: form.region.trim() || DEFAULTS.region,
           kiro2apiKiroVersion: form.kiroVersion.trim() || DEFAULTS.kiroVersion,
-          kiro2apiAnthropicCompatMode: form.anthropicCompatMode || DEFAULTS.anthropicCompatMode,
         },
       })
       setSuccess('配置已保存')
@@ -109,51 +97,53 @@ function Kiro2ApiManager() {
     }
   }
 
+  const loadAdminData = async (adminKey, port) => {
+    try {
+      const headers = { Authorization: `Bearer ${adminKey}` }
+      const [credRes, modeRes] = await Promise.all([
+        fetch(`http://127.0.0.1:${port}/api/admin/credentials`, { headers }),
+        fetch(`http://127.0.0.1:${port}/api/admin/config/load-balancing`, { headers }),
+      ])
+
+      if (credRes.ok) {
+        const credData = await credRes.json()
+        setCredentials(Array.isArray(credData?.credentials) ? credData.credentials : [])
+        setSummary({
+          total: Number(credData?.total || 0),
+          available: Number(credData?.available || 0),
+          currentId: credData?.currentId || null,
+        })
+      } else {
+        setCredentials([])
+        setSummary({ total: 0, available: 0, currentId: null })
+      }
+
+      if (modeRes.ok) {
+        const modeData = await modeRes.json()
+        if (modeData?.mode) {
+          setLoadBalancingMode(modeData.mode)
+        }
+      }
+    } catch (_) {
+      // ignore transient failures
+    }
+  }
+
   const loadStatus = async (silent = true) => {
     if (!silent) setRefreshing(true)
     try {
       const res = await invoke('get_kiro2api_status')
       setStatus(res)
-      if (res.running && form.adminKey) {
-        await loadServiceInfo(form.adminKey, res.port || form.port)
+      if (res.running && form.adminKey.trim()) {
+        await loadAdminData(form.adminKey.trim(), res.port || form.port)
       } else {
-        setServiceInfo(null)
-        setAccounts([])
+        setCredentials([])
+        setSummary({ total: 0, available: 0, currentId: null })
       }
     } catch (e) {
       setError(String(e))
     } finally {
       if (!silent) setRefreshing(false)
-    }
-  }
-
-  const loadServiceInfo = async (adminKey, port) => {
-    try {
-      const headers = { Authorization: `Bearer ${adminKey}` }
-      const [statusRes, strategyRes, accountsRes] = await Promise.all([
-        fetch(`http://127.0.0.1:${port}/api/status`, { headers }),
-        fetch(`http://127.0.0.1:${port}/api/strategy`, { headers }),
-        fetch(`http://127.0.0.1:${port}/api/accounts`, { headers }),
-      ])
-
-      if (statusRes.ok) {
-        const statusData = await statusRes.json()
-        setServiceInfo(statusData)
-      }
-      if (strategyRes.ok) {
-        const strategyData = await strategyRes.json()
-        if (strategyData?.strategy) {
-          setStrategy(strategyData.strategy)
-        }
-      }
-      if (accountsRes.ok) {
-        const accountsData = await accountsRes.json()
-        setAccounts(Array.isArray(accountsData) ? accountsData : [])
-      } else {
-        setAccounts([])
-      }
-    } catch (_) {
-      // ignore transient failures
     }
   }
 
@@ -163,21 +153,19 @@ function Kiro2ApiManager() {
     setSuccess('')
     try {
       await saveSettings()
-      const projectPath = form.projectPath.trim()
       const res = await invoke('start_kiro2api_service', {
         params: {
-          projectPath: projectPath || null,
+          projectPath: form.projectPath.trim() || null,
           port: Number(form.port) || DEFAULTS.port,
           apiKey: form.apiKey.trim() || DEFAULTS.apiKey,
           adminKey: form.adminKey.trim() || DEFAULTS.adminKey,
           proxyUrl: form.proxyUrl.trim() || null,
           region: form.region.trim() || DEFAULTS.region,
           kiroVersion: form.kiroVersion.trim() || DEFAULTS.kiroVersion,
-          anthropicCompatMode: form.anthropicCompatMode || DEFAULTS.anthropicCompatMode,
         },
       })
       setStatus(res)
-      setSuccess('Kiro2API 已启动')
+      setSuccess('Kiro2API（Rust）已启动')
       await loadStatus()
     } catch (e) {
       setError(String(e))
@@ -195,7 +183,8 @@ function Kiro2ApiManager() {
         port: Number(form.port) || DEFAULTS.port,
       })
       setStatus(res)
-      setServiceInfo(null)
+      setCredentials([])
+      setSummary({ total: 0, available: 0, currentId: null })
       setSuccess('Kiro2API 已停止')
     } catch (e) {
       setError(String(e))
@@ -204,73 +193,73 @@ function Kiro2ApiManager() {
     }
   }
 
-  const handleApplyStrategy = async () => {
+  const handleApplyMode = async () => {
     setError('')
     setSuccess('')
     try {
-      const res = await fetch(`${baseUrl}/api/strategy`, {
+      const res = await fetch(`${baseUrl}/api/admin/config/load-balancing`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${form.adminKey.trim()}`,
+        },
+        body: JSON.stringify({ mode: loadBalancingMode }),
+      })
+      if (!res.ok) {
+        throw new Error(await parseError(res, `设置失败 (${res.status})`))
+      }
+      setSuccess('负载模式已更新')
+      await loadStatus()
+    } catch (e) {
+      setError(String(e))
+    }
+  }
+
+  const withAction = async (id, action) => {
+    setActioningIds(prev => (prev.includes(id) ? prev : [...prev, id]))
+    try {
+      await action()
+    } finally {
+      setActioningIds(prev => prev.filter(x => x !== id))
+    }
+  }
+
+  const handleResetCredential = async (id) => {
+    setError('')
+    setSuccess('')
+    await withAction(id, async () => {
+      const res = await fetch(`${baseUrl}/api/admin/credentials/${id}/reset`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${form.adminKey.trim()}`,
+        },
+      })
+      if (!res.ok) {
+        throw new Error(await parseError(res, `重置失败 (${res.status})`))
+      }
+      setSuccess(`凭据 #${id} 已重置`) 
+      await loadStatus()
+    }).catch(e => setError(String(e)))
+  }
+
+  const handleToggleCredential = async (item) => {
+    setError('')
+    setSuccess('')
+    await withAction(item.id, async () => {
+      const res = await fetch(`${baseUrl}/api/admin/credentials/${item.id}/disabled`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${form.adminKey.trim()}`,
         },
-        body: JSON.stringify({ strategy }),
+        body: JSON.stringify({ disabled: !item.disabled }),
       })
       if (!res.ok) {
-        throw new Error(`设置策略失败 (${res.status})`)
+        throw new Error(await parseError(res, `更新失败 (${res.status})`))
       }
-      setSuccess('调度策略已更新')
-    } catch (e) {
-      setError(String(e))
-    }
-  }
-
-  const handleRecoverCooldown = async (accountId) => {
-    setError('')
-    setSuccess('')
-    setRecoveringIds(prev => (prev.includes(accountId) ? prev : [...prev, accountId]))
-    try {
-      const res = await fetch(`${baseUrl}/api/accounts/${accountId}/recover-cooldown`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${form.adminKey.trim()}`,
-        },
-      })
-      if (!res.ok) {
-        throw new Error(await parseError(res, `恢复失败 (${res.status})`))
-      }
-      setSuccess('账号状态已恢复')
+      setSuccess(`凭据 #${item.id} 状态已更新`) 
       await loadStatus()
-    } catch (e) {
-      setError(String(e))
-    } finally {
-      setRecoveringIds(prev => prev.filter(id => id !== accountId))
-    }
-  }
-
-  const handleRecoverAllCooldown = async () => {
-    setError('')
-    setSuccess('')
-    setRecoveringAll(true)
-    try {
-      const res = await fetch(`${baseUrl}/api/accounts/recover-all-cooldown`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${form.adminKey.trim()}`,
-        },
-      })
-      if (!res.ok) {
-        throw new Error(await parseError(res, `恢复失败 (${res.status})`))
-      }
-      const data = await res.json()
-      const recovered = Number(data?.recovered || 0)
-      setSuccess(recovered > 0 ? `已恢复 ${recovered} 个冷却账号` : '当前没有冷却账号')
-      await loadStatus()
-    } catch (e) {
-      setError(String(e))
-    } finally {
-      setRecoveringAll(false)
-    }
+    }).catch(e => setError(String(e)))
   }
 
   useEffect(() => {
@@ -294,7 +283,7 @@ function Kiro2ApiManager() {
           </div>
           <div>
             <h1 className={`text-2xl font-bold ${colors.text}`}>Kiro2API</h1>
-            <p className={`text-sm ${colors.textMuted}`}>共用当前账号池（accounts.json）的 API 代理控制面板</p>
+            <p className={`text-sm ${colors.textMuted}`}>Rust 引擎（kiro.rs）- 共用当前账号池（accounts.json）</p>
           </div>
         </div>
 
@@ -337,6 +326,11 @@ function Kiro2ApiManager() {
               共享账号文件: <span className={colors.text}>{status.sharedAccountsFile}</span>
             </div>
           )}
+          {status.projectPath && (
+            <div className={`mt-1 text-xs ${colors.textMuted}`}>
+              运行时路径: <span className={colors.text}>{status.projectPath}</span>
+            </div>
+          )}
           {status.logPath && (
             <div className={`mt-1 text-xs ${colors.textMuted}`}>
               日志文件: <span className={colors.text}>{status.logPath}</span>
@@ -360,7 +354,7 @@ function Kiro2ApiManager() {
               {stopping ? '停止中...' : '停止服务'}
             </button>
             <button
-              onClick={() => openUrl(`${baseUrl}/login`)}
+              onClick={() => openUrl(`${baseUrl}/admin`)}
               disabled={!status.running}
               className={`px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50 flex items-center gap-2 ${isDark ? 'bg-white/10 hover:bg-white/15 text-white' : 'bg-gray-100 hover:bg-gray-200 text-gray-900'}`}
             >
@@ -373,12 +367,12 @@ function Kiro2ApiManager() {
         <div className={`${colors.card} border ${colors.cardBorder} rounded-2xl p-5`}>
           <div className={`font-semibold ${colors.text} mb-4`}>启动配置</div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-            <label className="space-y-1">
-              <div className={colors.textMuted}>项目路径</div>
+            <label className="space-y-1 md:col-span-2">
+              <div className={colors.textMuted}>运行时路径（可选）</div>
               <input
                 value={form.projectPath}
                 onChange={e => setField('projectPath', e.target.value)}
-                placeholder="留空使用内置离线引擎（推荐），或填写本地 Kiro2api-Node 路径"
+                placeholder="留空使用内置离线 kiro-rs，或填写本地 kiro-rs 可执行文件/项目路径"
                 className={`w-full px-3 py-2 rounded-lg border ${colors.cardBorder} ${colors.input} ${colors.text}`}
               />
             </label>
@@ -388,6 +382,14 @@ function Kiro2ApiManager() {
                 type="number"
                 value={form.port}
                 onChange={e => setField('port', Number(e.target.value))}
+                className={`w-full px-3 py-2 rounded-lg border ${colors.cardBorder} ${colors.input} ${colors.text}`}
+              />
+            </label>
+            <label className="space-y-1">
+              <div className={colors.textMuted}>Region</div>
+              <input
+                value={form.region}
+                onChange={e => setField('region', e.target.value)}
                 className={`w-full px-3 py-2 rounded-lg border ${colors.cardBorder} ${colors.input} ${colors.text}`}
               />
             </label>
@@ -408,14 +410,6 @@ function Kiro2ApiManager() {
               />
             </label>
             <label className="space-y-1">
-              <div className={colors.textMuted}>Region</div>
-              <input
-                value={form.region}
-                onChange={e => setField('region', e.target.value)}
-                className={`w-full px-3 py-2 rounded-lg border ${colors.cardBorder} ${colors.input} ${colors.text}`}
-              />
-            </label>
-            <label className="space-y-1">
               <div className={colors.textMuted}>Kiro Version</div>
               <input
                 value={form.kiroVersion}
@@ -424,19 +418,6 @@ function Kiro2ApiManager() {
               />
             </label>
             <label className="space-y-1">
-              <div className={colors.textMuted}>Anthropic 兼容策略</div>
-              <select
-                value={form.anthropicCompatMode}
-                onChange={e => setField('anthropicCompatMode', e.target.value)}
-                className={`w-full px-3 py-2 rounded-lg border ${colors.cardBorder} ${colors.input} ${colors.text}`}
-              >
-                <option value="strict">strict（推荐：先严格，再逐级兜底）</option>
-                <option value="balanced">balanced（中等兜底）</option>
-                <option value="relaxed">relaxed（最大兜底）</option>
-                <option value="hard-strict">hard-strict（仅轻量兼容）</option>
-              </select>
-            </label>
-            <label className="space-y-1 md:col-span-2">
               <div className={colors.textMuted}>代理 (可选)</div>
               <input
                 value={form.proxyUrl}
@@ -445,9 +426,6 @@ function Kiro2ApiManager() {
                 className={`w-full px-3 py-2 rounded-lg border ${colors.cardBorder} ${colors.input} ${colors.text}`}
               />
             </label>
-            <div className={`text-xs ${colors.textMuted} md:col-span-2`}>
-              `strict` 为 strict-first：仅在上游判定 malformed 时才逐级降级；`hard-strict` 才是最少兼容兜底。
-            </div>
           </div>
           <button
             onClick={saveSettings}
@@ -464,103 +442,83 @@ function Kiro2ApiManager() {
             <div className={`font-semibold ${colors.text}`}>运行信息</div>
           </div>
           <div className={`text-sm ${colors.textMuted} space-y-2`}>
-            <div>请求调度策略（代理服务侧）：</div>
+            <div className={`pt-1 ${colors.text}`}>
+              <div>凭据池: total={summary.total}, available={summary.available}, current={summary.currentId || '-'}</div>
+            </div>
             <div className="flex gap-2 items-center">
               <select
-                value={strategy}
-                onChange={e => setStrategy(e.target.value)}
+                value={loadBalancingMode}
+                onChange={e => setLoadBalancingMode(e.target.value)}
                 className={`px-3 py-2 rounded-lg border ${colors.cardBorder} ${colors.input} ${colors.text}`}
               >
-                <option value="round-robin">round-robin</option>
-                <option value="random">random</option>
-                <option value="least-used">least-used</option>
+                <option value="priority">priority</option>
+                <option value="balanced">balanced</option>
               </select>
               <button
-                onClick={handleApplyStrategy}
+                onClick={handleApplyMode}
                 disabled={!status.running}
                 className="px-3 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm disabled:opacity-50"
               >
-                应用策略
+                应用负载模式
               </button>
             </div>
-            {serviceInfo && (
-              <div className={`pt-2 ${colors.text}`}>
-                <div>服务状态: {serviceInfo.status || '-'}</div>
-                <div>运行时长: {serviceInfo.uptimeSecs || 0}s</div>
-                <div>账号池: total={serviceInfo.pool?.total || 0}, active={serviceInfo.pool?.active || 0}</div>
-              </div>
-            )}
-            {!serviceInfo && <div>服务未返回状态信息，请确认服务已启动且 Admin Key 正确。</div>}
           </div>
         </div>
 
         <div className={`${colors.card} border ${colors.cardBorder} rounded-2xl p-5`}>
-          <div className="flex items-center justify-between mb-3">
-            <div className={`font-semibold ${colors.text}`}>账号状态（2API）</div>
-            <button
-              onClick={handleRecoverAllCooldown}
-              disabled={!status.running || recoveringAll || cooldownCount === 0}
-              className="px-3 py-2 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-sm disabled:opacity-50 flex items-center gap-2"
-            >
-              <RotateCcw size={14} className={recoveringAll ? 'animate-spin' : ''} />
-              {recoveringAll ? '恢复中...' : `恢复全部冷却 (${cooldownCount})`}
-            </button>
-          </div>
+          <div className={`font-semibold ${colors.text} mb-3`}>凭据状态（Admin API）</div>
 
           {!status.running && (
-            <div className={`text-sm ${colors.textMuted}`}>服务未启动，无法读取账号状态。</div>
+            <div className={`text-sm ${colors.textMuted}`}>服务未启动，无法读取凭据状态。</div>
           )}
 
-          {status.running && accounts.length === 0 && (
-            <div className={`text-sm ${colors.textMuted}`}>暂无账号数据或 Admin Key 不匹配。</div>
+          {status.running && credentials.length === 0 && (
+            <div className={`text-sm ${colors.textMuted}`}>暂无凭据数据或 Admin Key 不匹配。</div>
           )}
 
-          {status.running && accounts.length > 0 && (
+          {status.running && credentials.length > 0 && (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className={`border-b ${colors.cardBorder}`}>
-                    <th className={`text-left py-2 pr-3 ${colors.textMuted} font-medium`}>账号</th>
-                    <th className={`text-left py-2 pr-3 ${colors.textMuted} font-medium`}>状态</th>
-                    <th className={`text-left py-2 pr-3 ${colors.textMuted} font-medium`}>请求</th>
-                    <th className={`text-left py-2 pr-3 ${colors.textMuted} font-medium`}>错误</th>
-                    <th className={`text-left py-2 ${colors.textMuted} font-medium`}>操作</th>
+                  <tr className={`text-left ${colors.textMuted}`}>
+                    <th className="py-2 pr-4">ID</th>
+                    <th className="py-2 pr-4">邮箱</th>
+                    <th className="py-2 pr-4">认证</th>
+                    <th className="py-2 pr-4">状态</th>
+                    <th className="py-2 pr-4">失败计数</th>
+                    <th className="py-2 pr-4">优先级</th>
+                    <th className="py-2 pr-4">操作</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {accounts.map(account => {
-                    const recovering = recoveringIds.includes(account.id)
+                  {credentials.map(item => {
+                    const busy = actioningIds.includes(item.id)
                     return (
-                      <tr key={account.id} className={`border-b last:border-b-0 ${colors.cardBorder}`}>
-                        <td className={`py-2 pr-3 ${colors.text}`}>{account.name || account.id}</td>
-                        <td className="py-2 pr-3">
-                          <span className={`inline-flex px-2 py-0.5 rounded text-xs ${
-                            account.status === 'active'
-                              ? 'bg-emerald-500/15 text-emerald-500'
-                              : account.status === 'cooldown'
-                                ? 'bg-amber-500/15 text-amber-500'
-                                : account.status === 'invalid'
-                                  ? 'bg-red-500/15 text-red-500'
-                                  : 'bg-slate-500/15 text-slate-500'
-                          }`}>
-                            {account.status || '-'}
-                          </span>
-                        </td>
-                        <td className={`py-2 pr-3 ${colors.text}`}>{account.requestCount ?? 0}</td>
-                        <td className={`py-2 pr-3 ${colors.text}`}>{account.errorCount ?? 0}</td>
-                        <td className="py-2">
-                          {account.status === 'cooldown' ? (
+                      <tr key={item.id} className={`border-t ${colors.cardBorder}`}>
+                        <td className={`py-2 pr-4 ${colors.text}`}>{item.id}{item.isCurrent ? ' *' : ''}</td>
+                        <td className={`py-2 pr-4 ${colors.text}`}>{item.email || '-'}</td>
+                        <td className={`py-2 pr-4 ${colors.text}`}>{item.authMethod || '-'}</td>
+                        <td className={`py-2 pr-4 ${colors.text}`}>{item.disabled ? '已禁用' : '可用'}</td>
+                        <td className={`py-2 pr-4 ${colors.text}`}>{item.failureCount ?? 0}</td>
+                        <td className={`py-2 pr-4 ${colors.text}`}>{item.priority}</td>
+                        <td className="py-2 pr-4">
+                          <div className="flex gap-2">
                             <button
-                              onClick={() => handleRecoverCooldown(account.id)}
-                              disabled={recovering || recoveringAll}
-                              className="px-2.5 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs disabled:opacity-50 flex items-center gap-1.5"
+                              onClick={() => handleResetCredential(item.id)}
+                              disabled={busy}
+                              className="px-2 py-1 rounded bg-amber-600 hover:bg-amber-700 text-white text-xs disabled:opacity-50 flex items-center gap-1"
                             >
-                              <RotateCcw size={12} className={recovering ? 'animate-spin' : ''} />
-                              {recovering ? '恢复中' : '恢复'}
+                              <RotateCcw size={12} className={busy ? 'animate-spin' : ''} />
+                              重置
                             </button>
-                          ) : (
-                            <span className={`text-xs ${colors.textMuted}`}>-</span>
-                          )}
+                            <button
+                              onClick={() => handleToggleCredential(item)}
+                              disabled={busy}
+                              className="px-2 py-1 rounded bg-slate-600 hover:bg-slate-700 text-white text-xs disabled:opacity-50"
+                            >
+                              {item.disabled ? '启用' : '禁用'}
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     )

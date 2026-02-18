@@ -1,4 +1,6 @@
+use crate::account::Account;
 use crate::state::{AppState, Kiro2ApiRuntime};
+use chrono::{Local, NaiveDateTime, TimeZone};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, OpenOptions};
 #[cfg(unix)]
@@ -20,7 +22,6 @@ pub struct Kiro2ApiStartParams {
     pub region: Option<String>,
     pub kiro_version: Option<String>,
     pub proxy_url: Option<String>,
-    pub anthropic_compat_mode: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -37,47 +38,39 @@ pub struct Kiro2ApiStatus {
     pub message: Option<String>,
 }
 
-const BUNDLED_PROJECT_RELATIVE: &str = "offline/kiro2api-node";
-const BUNDLED_NODE_RELATIVE_MAC_ARM64: &str = "offline/node/darwin-aarch64/bin/node";
-
-fn default_project_candidates() -> Vec<PathBuf> {
-    let home = std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .unwrap_or_else(|_| ".".to_string());
-    let home_dir = PathBuf::from(home);
-
-    vec![
-        home_dir.join("project").join("Kiro2api-Node"),
-        home_dir.join("project").join("kiro2api-node"),
-        home_dir.join("Kiro2api-Node"),
-        home_dir.join("kiro2api-node"),
-    ]
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct KiroRsConfig {
+    host: String,
+    port: u16,
+    region: String,
+    kiro_version: String,
+    api_key: String,
+    admin_api_key: String,
+    proxy_url: Option<String>,
+    load_balancing_mode: String,
+    tls_backend: String,
 }
 
-fn is_valid_project_dir(project_dir: &Path) -> bool {
-    project_dir.exists() && project_dir.join("src").join("index.js").exists()
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct KiroRsCredential {
+    id: u64,
+    refresh_token: String,
+    auth_method: String,
+    priority: u32,
+    disabled: bool,
+    access_token: Option<String>,
+    profile_arn: Option<String>,
+    expires_at: Option<String>,
+    client_id: Option<String>,
+    client_secret: Option<String>,
+    region: Option<String>,
+    email: Option<String>,
+    subscription_title: Option<String>,
 }
 
-fn resolve_external_project_path(project_path: Option<String>) -> Result<Option<String>, String> {
-    if let Some(path) = project_path {
-        let trimmed = path.trim();
-        if !trimmed.is_empty() {
-            let project_dir = PathBuf::from(trimmed);
-            if is_valid_project_dir(&project_dir) {
-                return Ok(Some(trimmed.to_string()));
-            }
-            return Err(format!("project path not found: {}", trimmed));
-        }
-    }
-
-    for candidate in default_project_candidates() {
-        if is_valid_project_dir(&candidate) {
-            return Ok(Some(candidate.to_string_lossy().to_string()));
-        }
-    }
-
-    Ok(None)
-}
+const BUNDLED_RUNTIME_RELATIVE_MAC_ARM64: &str = "offline/kiro-rs/darwin-aarch64/kiro-rs";
 
 fn account_store_path() -> PathBuf {
     let data_dir = dirs::data_dir().unwrap_or_else(|| {
@@ -89,14 +82,14 @@ fn account_store_path() -> PathBuf {
     data_dir.join(".kiro-account-manager").join("accounts.json")
 }
 
-fn default_node_data_dir() -> PathBuf {
+fn default_runtime_data_dir() -> PathBuf {
     let data_dir = dirs::data_dir().unwrap_or_else(|| {
         let home = std::env::var("USERPROFILE")
             .or_else(|_| std::env::var("HOME"))
             .unwrap_or_else(|_| ".".to_string());
         PathBuf::from(home)
     });
-    data_dir.join(".kiro-account-manager").join("kiro2api-node")
+    data_dir.join(".kiro-account-manager").join("kiro-rs")
 }
 
 fn command_in_path_candidates(name: &str) -> Vec<PathBuf> {
@@ -127,104 +120,104 @@ fn resource_dir_candidates(app_handle: &AppHandle) -> Vec<PathBuf> {
     candidates
 }
 
-fn bundled_project_candidates(app_handle: &AppHandle) -> Vec<PathBuf> {
+fn bundled_runtime_candidates(app_handle: &AppHandle) -> Vec<PathBuf> {
     let mut candidates = Vec::new();
     for base in resource_dir_candidates(app_handle) {
-        candidates.push(base.join(BUNDLED_PROJECT_RELATIVE));
-        candidates.push(base.join("kiro2api-node"));
-        candidates.push(base.join("resources").join(BUNDLED_PROJECT_RELATIVE));
-        candidates.push(base.join("resources").join("kiro2api-node"));
+        candidates.push(base.join(BUNDLED_RUNTIME_RELATIVE_MAC_ARM64));
+        candidates.push(base.join("offline").join("kiro-rs").join("kiro-rs"));
+        candidates.push(base.join("kiro-rs"));
+        candidates.push(base.join("resources").join(BUNDLED_RUNTIME_RELATIVE_MAC_ARM64));
     }
     candidates
 }
 
-fn resolve_bundled_project_path(app_handle: &AppHandle) -> Result<String, String> {
-    let mut checked = Vec::new();
-    for candidate in bundled_project_candidates(app_handle) {
-        checked.push(candidate.to_string_lossy().to_string());
-        if is_valid_project_dir(&candidate) {
-            return Ok(candidate.to_string_lossy().to_string());
-        }
-    }
-
-    Err(format!(
-        "Bundled Kiro2API project not found in app resources. Reinstall with offline DMG. Checked: {}",
-        checked.join(", ")
-    ))
-}
-
-fn bundled_node_candidates(app_handle: &AppHandle) -> Vec<PathBuf> {
-    let mut candidates = Vec::new();
-    for base in resource_dir_candidates(app_handle) {
-        candidates.push(base.join(BUNDLED_NODE_RELATIVE_MAC_ARM64));
-        candidates.push(base.join("node").join("darwin-aarch64").join("bin").join("node"));
-        candidates.push(base.join("offline").join("node").join("darwin-aarch64").join("node"));
-        candidates.push(
-            base.join("resources")
-                .join("node")
-                .join("darwin-aarch64")
-                .join("bin")
-                .join("node"),
-        );
-        candidates.push(
-            base.join("resources")
-                .join("offline")
-                .join("node")
-                .join("darwin-aarch64")
-                .join("node"),
-        );
-        candidates.push(base.join("resources").join(BUNDLED_NODE_RELATIVE_MAC_ARM64));
-    }
-    candidates
-}
-
-fn system_node_candidates() -> Vec<PathBuf> {
-    let mut candidates = command_in_path_candidates("node");
-
+fn system_runtime_candidates() -> Vec<PathBuf> {
+    let mut candidates = command_in_path_candidates("kiro-rs");
     for p in [
-        "/opt/homebrew/bin/node",
-        "/usr/local/bin/node",
-        "/opt/homebrew/opt/node/bin/node",
-        "/opt/homebrew/opt/node@22/bin/node",
-        "/opt/homebrew/opt/node@20/bin/node",
-        "/usr/bin/node",
+        "/opt/homebrew/bin/kiro-rs",
+        "/usr/local/bin/kiro-rs",
+        "/usr/bin/kiro-rs",
     ] {
         candidates.push(PathBuf::from(p));
     }
-
     candidates
 }
 
-fn resolve_node_binary(app_handle: &AppHandle) -> Result<PathBuf, String> {
-    let mut checked = Vec::new();
+fn looks_like_legacy_node_project(path: &Path) -> bool {
+    path.join("package.json").exists() && path.join("src").join("index.js").exists()
+}
 
-    if let Ok(custom) = std::env::var("NODE_BINARY") {
-        let custom = custom.trim().to_string();
-        if !custom.is_empty() {
-            let candidate = PathBuf::from(&custom);
-            checked.push(custom);
+fn resolve_custom_runtime_path(path: &Path) -> Option<PathBuf> {
+    if path.exists() && path.is_file() {
+        return Some(path.to_path_buf());
+    }
+
+    if path.is_dir() {
+        let candidates = [
+            path.join("kiro-rs"),
+            path.join("target").join("release").join("kiro-rs"),
+            path.join("target").join("debug").join("kiro-rs"),
+            path.join("bin").join("kiro-rs"),
+        ];
+        for candidate in candidates {
             if candidate.exists() && candidate.is_file() {
-                return Ok(candidate);
+                return Some(candidate);
             }
         }
     }
 
-    for candidate in bundled_node_candidates(app_handle) {
+    None
+}
+
+fn resolve_runtime_binary(
+    app_handle: &AppHandle,
+    project_path: Option<String>,
+) -> Result<PathBuf, String> {
+    let mut checked = Vec::new();
+    let mut custom_error: Option<String> = None;
+
+    if let Some(path) = project_path {
+        let trimmed = path.trim();
+        if !trimmed.is_empty() {
+            let candidate = PathBuf::from(trimmed);
+            if looks_like_legacy_node_project(&candidate) {
+                custom_error = Some(format!(
+                    "legacy Node project path is no longer used by default runtime: {}",
+                    trimmed
+                ));
+            } else if let Some(binary) = resolve_custom_runtime_path(&candidate) {
+                checked.push(binary.to_string_lossy().to_string());
+                return Ok(binary);
+            } else {
+                custom_error = Some(format!(
+                    "runtime path not found or invalid: {}",
+                    trimmed
+                ));
+                checked.push(trimmed.to_string());
+            }
+        }
+    }
+
+    for candidate in bundled_runtime_candidates(app_handle) {
         checked.push(candidate.to_string_lossy().to_string());
         if candidate.exists() && candidate.is_file() {
             return Ok(candidate);
         }
     }
 
-    for candidate in system_node_candidates() {
+    for candidate in system_runtime_candidates() {
         checked.push(candidate.to_string_lossy().to_string());
         if candidate.exists() && candidate.is_file() {
             return Ok(candidate);
         }
     }
 
+    let prefix = custom_error
+        .map(|e| format!("{}; ", e))
+        .unwrap_or_default();
     Err(format!(
-        "Node.js executable not found. Offline package should include a bundled node binary. Checked: {}",
+        "{}Kiro.rs executable not found. Reinstall offline DMG or set a custom runtime path. Checked: {}",
+        prefix,
         checked.join(", ")
     ))
 }
@@ -247,88 +240,143 @@ fn ensure_executable(_path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn ensure_project_runtime_files(project_dir: &Path, is_bundled: bool) -> Result<(), String> {
-    if !is_valid_project_dir(project_dir) {
-        return Err(format!(
-            "invalid Kiro2api-Node project path: {}",
-            project_dir.to_string_lossy()
-        ));
+fn normalize_expires_at(expires_at: Option<&str>) -> Option<String> {
+    let raw = expires_at?.trim();
+    if raw.is_empty() {
+        return None;
     }
 
-    if !project_dir.join("node_modules").exists() {
-        if is_bundled {
-            return Err(format!(
-                "bundled Kiro2API runtime is incomplete (node_modules missing): {}",
-                project_dir.to_string_lossy()
-            ));
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(raw) {
+        return Some(dt.to_rfc3339());
+    }
+
+    if let Ok(naive) = NaiveDateTime::parse_from_str(raw, "%Y/%m/%d %H:%M:%S") {
+        if let Some(local_dt) = Local.from_local_datetime(&naive).single() {
+            return Some(local_dt.to_rfc3339());
         }
-        return Err(format!(
-            "node_modules not found in '{}'. Leave project path empty to use bundled offline runtime.",
-            project_dir.to_string_lossy()
-        ));
     }
 
-    Ok(())
+    None
 }
 
-fn resolve_project_for_start(
-    app_handle: &AppHandle,
-    project_path: Option<String>,
-) -> Result<(String, bool), String> {
-    if let Some(path) = project_path {
-        let trimmed = path.trim();
-        if !trimmed.is_empty() {
-            let explicit_dir = PathBuf::from(trimmed);
-            if is_valid_project_dir(&explicit_dir) {
-                return Ok((trimmed.to_string(), false));
-            }
+fn account_to_credential(account: &Account, priority: usize, default_region: &str) -> Option<KiroRsCredential> {
+    let refresh_token = account
+        .refresh_token
+        .as_ref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())?;
 
-            let explicit_error = format!("project path not found: {}", trimmed);
-            return match resolve_bundled_project_path(app_handle) {
-                Ok(path) => Ok((path, true)),
-                Err(bundle_error) => Err(format!("{}; {}", explicit_error, bundle_error)),
-            };
-        }
-    }
-
-    let bundled_error = match resolve_bundled_project_path(app_handle) {
-        Ok(path) => return Ok((path, true)),
-        Err(e) => e,
+    let provider = account.provider.as_deref().unwrap_or("social").to_lowercase();
+    let has_idc_fields = account.client_id.is_some() && account.client_secret.is_some();
+    let auth_method = if provider.contains("builder") || provider.contains("enterprise") || has_idc_fields {
+        "idc".to_string()
+    } else {
+        "social".to_string()
     };
 
-    if let Some(path) = resolve_external_project_path(None)? {
-        return Ok((path, false));
-    }
+    let status_lc = account.status.to_lowercase();
+    let disabled = status_lc.contains("封禁") || status_lc.contains("banned") || status_lc.contains("suspend");
 
-    Err(format!(
-        "{} No local Kiro2api-Node project found either.",
-        bundled_error
-    ))
+    let subscription_title = account
+        .usage_data
+        .as_ref()
+        .and_then(|usage| usage.get("subscriptionInfo"))
+        .and_then(|s| {
+            s.get("subscriptionTitle")
+                .or_else(|| s.get("subscriptionName"))
+                .or_else(|| s.get("subscriptionType"))
+        })
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    let region = account
+        .region
+        .as_ref()
+        .map(|r| r.trim().to_string())
+        .filter(|r| !r.is_empty())
+        .or_else(|| Some(default_region.to_string()));
+
+    Some(KiroRsCredential {
+        id: (priority + 1) as u64,
+        refresh_token,
+        auth_method,
+        priority: priority as u32,
+        disabled,
+        access_token: account
+            .access_token
+            .as_ref()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty()),
+        profile_arn: account
+            .profile_arn
+            .as_ref()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty()),
+        expires_at: normalize_expires_at(account.expires_at.as_deref()),
+        client_id: account
+            .client_id
+            .as_ref()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty()),
+        client_secret: account
+            .client_secret
+            .as_ref()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty()),
+        region,
+        email: Some(account.email.clone()).filter(|s| !s.trim().is_empty()),
+        subscription_title,
+    })
 }
 
-fn merged_path_for_child() -> String {
-    let mut paths: Vec<PathBuf> = Vec::new();
-    if let Some(existing) = std::env::var_os("PATH") {
-        paths.extend(std::env::split_paths(&existing));
+fn build_runtime_credentials(default_region: &str) -> Result<Vec<KiroRsCredential>, String> {
+    let path = account_store_path();
+    if !path.exists() {
+        return Err(format!(
+            "shared accounts file not found: {}",
+            path.to_string_lossy()
+        ));
     }
 
-    for p in [
-        "/opt/homebrew/bin",
-        "/usr/local/bin",
-        "/opt/homebrew/opt/node/bin",
-        "/opt/homebrew/opt/node@22/bin",
-        "/opt/homebrew/opt/node@20/bin",
-    ] {
-        let pb = PathBuf::from(p);
-        if !paths.iter().any(|x| x == &pb) {
-            paths.push(pb);
+    let content = fs::read_to_string(&path)
+        .map_err(|e| format!("read shared accounts failed ({}): {}", path.to_string_lossy(), e))?;
+    let accounts: Vec<Account> = serde_json::from_str(&content)
+        .map_err(|e| format!("parse shared accounts failed: {}", e))?;
+
+    let mut credentials = Vec::new();
+    for (idx, account) in accounts.iter().enumerate() {
+        if let Some(cred) = account_to_credential(account, idx, default_region) {
+            credentials.push(cred);
         }
     }
 
-    std::env::join_paths(paths)
-        .ok()
-        .and_then(|v| v.into_string().ok())
-        .unwrap_or_else(|| "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin".to_string())
+    if credentials.is_empty() {
+        return Err("no valid account with refresh token found in shared accounts.json".to_string());
+    }
+
+    Ok(credentials)
+}
+
+fn write_runtime_files(
+    data_dir: &Path,
+    config: &KiroRsConfig,
+    credentials: &[KiroRsCredential],
+) -> Result<(PathBuf, PathBuf), String> {
+    fs::create_dir_all(data_dir).map_err(|e| format!("create data dir failed: {}", e))?;
+
+    let config_path = data_dir.join("config.json");
+    let credentials_path = data_dir.join("credentials.json");
+
+    let config_json =
+        serde_json::to_string_pretty(config).map_err(|e| format!("serialize config failed: {}", e))?;
+    fs::write(&config_path, config_json).map_err(|e| format!("write config failed: {}", e))?;
+
+    let credentials_json = serde_json::to_string_pretty(credentials)
+        .map_err(|e| format!("serialize credentials failed: {}", e))?;
+    fs::write(&credentials_path, credentials_json)
+        .map_err(|e| format!("write credentials failed: {}", e))?;
+
+    Ok((config_path, credentials_path))
 }
 
 fn cleanup_if_exited(state: &mut Option<Kiro2ApiRuntime>) {
@@ -354,7 +402,6 @@ fn list_listening_pids(port: u16) -> Result<Vec<u32>, String> {
         .map_err(|e| format!("failed to query listeners on port {}: {}", port, e))?;
 
     if !output.status.success() {
-        // lsof exits with code 1 when no match
         if output.status.code() == Some(1) {
             return Ok(Vec::new());
         }
@@ -385,31 +432,30 @@ fn process_cmdline(pid: u32) -> Option<String> {
 }
 
 #[cfg(unix)]
-fn is_kiro2api_pid(pid: u32, project_dir: Option<&Path>) -> bool {
+fn is_kiro2api_pid(pid: u32, marker_path: Option<&Path>) -> bool {
     let cmd = match process_cmdline(pid) {
         Some(v) => v.to_lowercase(),
         None => return false,
     };
 
-    let project_match = project_dir
+    let marker_match = marker_path
         .map(|p| cmd.contains(&p.to_string_lossy().to_lowercase()))
         .unwrap_or(false);
 
-    let looks_like_kiro2api = cmd.contains("kiro2api")
+    let looks_like_kiro_runtime = cmd.contains("kiro-rs")
+        || cmd.contains("kiro2api")
         || (cmd.contains("node") && cmd.contains("src/index.js"));
 
-    project_match || looks_like_kiro2api
+    marker_match || looks_like_kiro_runtime
 }
 
 #[cfg(unix)]
 fn kill_pid(pid: u32, signal: &str) {
-    let _ = Command::new("kill")
-        .args([signal, &pid.to_string()])
-        .status();
+    let _ = Command::new("kill").args([signal, &pid.to_string()]).status();
 }
 
 #[cfg(unix)]
-fn cleanup_stale_kiro2api_on_port(port: u16, project_dir: Option<&Path>) -> Result<(), String> {
+fn cleanup_stale_kiro2api_on_port(port: u16, marker_path: Option<&Path>) -> Result<(), String> {
     let pids = list_listening_pids(port)?;
     if pids.is_empty() {
         return Ok(());
@@ -418,7 +464,7 @@ fn cleanup_stale_kiro2api_on_port(port: u16, project_dir: Option<&Path>) -> Resu
     let mut kiro_pids = Vec::new();
     let mut foreign_pids = Vec::new();
     for pid in pids {
-        if is_kiro2api_pid(pid, project_dir) {
+        if is_kiro2api_pid(pid, marker_path) {
             kiro_pids.push(pid);
         } else {
             foreign_pids.push(pid);
@@ -439,7 +485,7 @@ fn cleanup_stale_kiro2api_on_port(port: u16, project_dir: Option<&Path>) -> Resu
 
     let still_listening = list_listening_pids(port)?;
     for pid in still_listening {
-        if is_kiro2api_pid(pid, project_dir) {
+        if is_kiro2api_pid(pid, marker_path) {
             kill_pid(pid, "-KILL");
         }
     }
@@ -457,13 +503,14 @@ fn cleanup_stale_kiro2api_on_port(port: u16, project_dir: Option<&Path>) -> Resu
 }
 
 #[cfg(not(unix))]
-fn cleanup_stale_kiro2api_on_port(_port: u16, _project_dir: Option<&Path>) -> Result<(), String> {
+fn cleanup_stale_kiro2api_on_port(_port: u16, _marker_path: Option<&Path>) -> Result<(), String> {
     Ok(())
 }
 
-async fn check_health(port: u16) -> bool {
-    let url = format!("http://127.0.0.1:{}/health", port);
-    match reqwest::get(url).await {
+async fn check_health(port: u16, api_key: &str) -> bool {
+    let url = format!("http://127.0.0.1:{}/v1/models", port);
+    let client = reqwest::Client::new();
+    match client.get(url).header("x-api-key", api_key).send().await {
         Ok(resp) => resp.status().is_success(),
         Err(_) => false,
     }
@@ -481,12 +528,13 @@ pub async fn get_kiro2api_status(state: State<'_, AppState>) -> Result<Kiro2ApiS
                 r.project_path.clone(),
                 r.log_path.clone(),
                 r.shared_accounts_file.clone(),
+                r.api_key.clone(),
             )
         })
     };
 
-    if let Some((pid, port, project_path, log_path, shared_accounts_file)) = snapshot {
-        let healthy = check_health(port).await;
+    if let Some((pid, port, project_path, log_path, shared_accounts_file, api_key)) = snapshot {
+        let healthy = check_health(port, &api_key).await;
         Ok(Kiro2ApiStatus {
             running: true,
             pid: Some(pid),
@@ -528,7 +576,6 @@ pub async fn start_kiro2api_service(
         region: None,
         kiro_version: None,
         proxy_url: None,
-        anthropic_compat_mode: None,
     });
 
     {
@@ -539,31 +586,43 @@ pub async fn start_kiro2api_service(
         }
     }
 
+    let runtime_binary = resolve_runtime_binary(&app_handle, params.project_path.clone())?;
+    ensure_executable(&runtime_binary)?;
+
     let data_dir = params
         .data_dir
         .as_ref()
         .map(PathBuf::from)
-        .unwrap_or_else(default_node_data_dir);
-
-    let (project_path, is_bundled_project) = resolve_project_for_start(&app_handle, params.project_path.clone())
-        .map_err(|e| format!("{} You can also set a custom local project path in Kiro2API tab.", e))?;
-
-    let project_dir = PathBuf::from(&project_path);
-    ensure_project_runtime_files(&project_dir, is_bundled_project)?;
+        .unwrap_or_else(default_runtime_data_dir);
 
     let port = params.port.unwrap_or(8080);
-    cleanup_stale_kiro2api_on_port(port, Some(&project_dir))?;
+    cleanup_stale_kiro2api_on_port(port, Some(&data_dir))?;
 
     let api_key = params.api_key.unwrap_or_else(|| "sk-default-key".to_string());
-    let admin_key = params.admin_key.unwrap_or_else(|| "admin-default-key".to_string());
+    let admin_key = params
+        .admin_key
+        .unwrap_or_else(|| "admin-default-key".to_string());
     let region = params.region.unwrap_or_else(|| "us-east-1".to_string());
-    let kiro_version = params.kiro_version.unwrap_or_else(|| "0.8.0".to_string());
-    let anthropic_compat_mode = params
-        .anthropic_compat_mode
-        .map(|s| s.trim().to_lowercase())
-        .filter(|s| s == "strict" || s == "balanced" || s == "relaxed" || s == "hard-strict")
-        .unwrap_or_else(|| "strict".to_string());
-    let shared_accounts_file = account_store_path();
+    let kiro_version = params.kiro_version.unwrap_or_else(|| "0.9.2".to_string());
+
+    let config = KiroRsConfig {
+        host: "127.0.0.1".to_string(),
+        port,
+        region: region.clone(),
+        kiro_version,
+        api_key,
+        admin_api_key: admin_key,
+        proxy_url: params
+            .proxy_url
+            .as_ref()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty()),
+        load_balancing_mode: "priority".to_string(),
+        tls_backend: "rustls".to_string(),
+    };
+
+    let credentials = build_runtime_credentials(&region)?;
+    let (config_path, credentials_path) = write_runtime_files(&data_dir, &config, &credentials)?;
 
     fs::create_dir_all(&data_dir).map_err(|e| format!("create data dir failed: {}", e))?;
     let log_path = data_dir.join("kiro2api.log");
@@ -576,37 +635,20 @@ pub async fn start_kiro2api_service(
         .try_clone()
         .map_err(|e| format!("clone log file failed: {}", e))?;
 
-    let node_binary = resolve_node_binary(&app_handle)?;
-    ensure_executable(&node_binary)?;
-
-    let mut cmd = Command::new(&node_binary);
-    cmd.arg("src/index.js")
-        .current_dir(&project_dir)
-        .env("PATH", merged_path_for_child())
-        .env("PORT", port.to_string())
-        .env("API_KEY", api_key)
-        .env("ADMIN_KEY", admin_key)
-        .env("DATA_DIR", data_dir.to_string_lossy().to_string())
-        .env("REGION", region)
-        .env("KIRO_VERSION", kiro_version)
-        .env("ANTHROPIC_COMPAT_MODE", anthropic_compat_mode)
-        .env(
-            "SHARED_ACCOUNTS_FILE",
-            shared_accounts_file.to_string_lossy().to_string(),
-        )
+    let mut cmd = Command::new(&runtime_binary);
+    cmd.arg("--config")
+        .arg(&config_path)
+        .arg("--credentials")
+        .arg(&credentials_path)
+        .env("RUST_LOG", "info")
+        .current_dir(&data_dir)
         .stdout(Stdio::from(log_file))
         .stderr(Stdio::from(log_file_err));
 
-    if let Some(proxy_url) = params.proxy_url {
-        if !proxy_url.trim().is_empty() {
-            cmd.env("PROXY_URL", proxy_url.trim());
-        }
-    }
-
     let child = cmd.spawn().map_err(|e| {
         format!(
-            "failed to start Kiro2API service with node binary '{}': {}",
-            node_binary.to_string_lossy(),
+            "failed to start Kiro2API service with runtime '{}': {}",
+            runtime_binary.to_string_lossy(),
             e
         )
     })?;
@@ -618,9 +660,10 @@ pub async fn start_kiro2api_service(
             child,
             pid,
             port,
-            project_path: project_path.clone(),
+            project_path: runtime_binary.to_string_lossy().to_string(),
             log_path: log_path.to_string_lossy().to_string(),
-            shared_accounts_file: shared_accounts_file.to_string_lossy().to_string(),
+            shared_accounts_file: account_store_path().to_string_lossy().to_string(),
+            api_key: config.api_key.clone(),
         });
     }
 
@@ -635,10 +678,8 @@ pub async fn stop_kiro2api_service(
     let port = port.unwrap_or(8080);
     {
         let mut runtime = state.kiro2api.lock().map_err(|e| format!("lock failed: {}", e))?;
-        // Dropping runtime triggers process termination in Kiro2ApiRuntime::drop.
         let _ = runtime.take();
     }
-    // If app was restarted, runtime state may be empty while stale listener still exists.
     cleanup_stale_kiro2api_on_port(port, None)?;
     get_kiro2api_status(state).await
 }
