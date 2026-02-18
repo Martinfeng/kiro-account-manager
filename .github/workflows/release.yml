@@ -34,10 +34,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          repository: ${{ secrets.PRIVATE_REPO }}
           ref: ${{ github.ref_name }}
-          token: ${{ secrets.PRIVATE_REPO_TOKEN }}
-          fetch-depth: 0  # 获取完整 git 历史，用于生成 Release Notes
+          fetch-depth: 0
 
       - name: Install Linux dependencies
         if: matrix.platform == 'ubuntu-22.04'
@@ -117,7 +115,7 @@ jobs:
       - name: Build and release
         uses: tauri-apps/tauri-action@v0.6
         env:
-          GITHUB_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           # Linux AppImage 使用 gzip 压缩，兼容旧版 AppImageLauncher
