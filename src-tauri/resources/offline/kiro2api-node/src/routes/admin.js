@@ -173,6 +173,29 @@ export function createAdminRouter(state) {
     res.json({ success });
   });
 
+  // POST /api/accounts/:id/recover-cooldown - 手动恢复冷却账号（共享模式也可用）
+  router.post('/accounts/:id/recover-cooldown', async (req, res) => {
+    try {
+      const success = await state.accountPool.recoverCooldown(req.params.id);
+      if (!success) {
+        return res.status(404).json({ error: '账号不存在' });
+      }
+      res.json({ success: true });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // POST /api/accounts/recover-all-cooldown - 手动恢复全部冷却账号（共享模式也可用）
+  router.post('/accounts/recover-all-cooldown', async (req, res) => {
+    try {
+      const result = await state.accountPool.recoverAllCooldowns();
+      res.json({ success: true, ...result });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // POST /api/accounts/:id/refresh-usage - 刷新单个账号额度
   router.post('/accounts/:id/refresh-usage', async (req, res) => {
     try {

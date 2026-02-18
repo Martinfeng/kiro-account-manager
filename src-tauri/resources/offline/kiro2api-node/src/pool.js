@@ -502,6 +502,45 @@ export class AccountPool {
     return false;
   }
 
+  async recoverCooldown(id) {
+    if (this.sharedMode) {
+      await this.syncSharedAccounts();
+    }
+
+    const account = this.accounts.get(id);
+    if (!account) return false;
+
+    if (account.status === 'cooldown') {
+      account.status = 'active';
+      if (this.db && !this.sharedMode) {
+        this.db.updateAccount(id, { status: 'active' });
+      }
+    }
+
+    return true;
+  }
+
+  async recoverAllCooldowns() {
+    if (this.sharedMode) {
+      await this.syncSharedAccounts();
+    }
+
+    let recovered = 0;
+    for (const [id, account] of this.accounts.entries()) {
+      if (account.status !== 'cooldown') continue;
+      account.status = 'active';
+      recovered++;
+      if (this.db && !this.sharedMode) {
+        this.db.updateAccount(id, { status: 'active' });
+      }
+    }
+
+    return {
+      total: this.accounts.size,
+      recovered
+    };
+  }
+
   setStrategy(strategy) {
     this.strategy = strategy;
   }

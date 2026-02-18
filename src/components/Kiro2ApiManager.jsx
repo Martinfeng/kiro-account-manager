@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { openUrl } from '@tauri-apps/plugin-opener'
-import { Play, Square, RefreshCw, ExternalLink, Server, Activity } from 'lucide-react'
+import { Play, Square, RefreshCw, ExternalLink, Server, Activity, RotateCcw } from 'lucide-react'
 import { useTheme } from '../contexts/ThemeContext'
 
 const DEFAULTS = {
@@ -32,11 +32,14 @@ function Kiro2ApiManager() {
     sharedAccountsFile: null,
   })
   const [serviceInfo, setServiceInfo] = useState(null)
+  const [accounts, setAccounts] = useState([])
   const [strategy, setStrategy] = useState('round-robin')
   const [saving, setSaving] = useState(false)
   const [starting, setStarting] = useState(false)
   const [stopping, setStopping] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
+  const [recoveringAll, setRecoveringAll] = useState(false)
+  const [recoveringIds, setRecoveringIds] = useState([])
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
 
@@ -44,9 +47,19 @@ function Kiro2ApiManager() {
     const port = form.port || status.port || 8080
     return `http://127.0.0.1:${port}`
   }, [form.port, status.port])
+  const cooldownCount = useMemo(() => accounts.filter(a => a.status === 'cooldown').length, [accounts])
 
   const setField = (key, value) => {
     setForm(prev => ({ ...prev, [key]: value }))
+  }
+
+  const parseError = async (res, fallback = '请求失败') => {
+    try {
+      const data = await res.json()
+      return data?.error || fallback
+    } catch (_) {
+      return fallback
+    }
   }
 
   const loadSettings = async () => {
@@ -102,6 +115,7 @@ function Kiro2ApiManager() {
         await loadServiceInfo(form.adminKey, res.port || form.port)
       } else {
         setServiceInfo(null)
+        setAccounts([])
       }
     } catch (e) {
       setError(String(e))
@@ -113,9 +127,10 @@ function Kiro2ApiManager() {
   const loadServiceInfo = async (adminKey, port) => {
     try {
       const headers = { Authorization: `Bearer ${adminKey}` }
-      const [statusRes, strategyRes] = await Promise.all([
+      const [statusRes, strategyRes, accountsRes] = await Promise.all([
         fetch(`http://127.0.0.1:${port}/api/status`, { headers }),
         fetch(`http://127.0.0.1:${port}/api/strategy`, { headers }),
+        fetch(`http://127.0.0.1:${port}/api/accounts`, { headers }),
       ])
 
       if (statusRes.ok) {
@@ -127,6 +142,12 @@ function Kiro2ApiManager() {
         if (strategyData?.strategy) {
           setStrategy(strategyData.strategy)
         }
+      }
+      if (accountsRes.ok) {
+        const accountsData = await accountsRes.json()
+        setAccounts(Array.isArray(accountsData) ? accountsData : [])
+      } else {
+        setAccounts([])
       }
     } catch (_) {
       // ignore transient failures
@@ -197,6 +218,54 @@ function Kiro2ApiManager() {
       setSuccess('调度策略已更新')
     } catch (e) {
       setError(String(e))
+    }
+  }
+
+  const handleRecoverCooldown = async (accountId) => {
+    setError('')
+    setSuccess('')
+    setRecoveringIds(prev => (prev.includes(accountId) ? prev : [...prev, accountId]))
+    try {
+      const res = await fetch(`${baseUrl}/api/accounts/${accountId}/recover-cooldown`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${form.adminKey.trim()}`,
+        },
+      })
+      if (!res.ok) {
+        throw new Error(await parseError(res, `恢复失败 (${res.status})`))
+      }
+      setSuccess('账号状态已恢复')
+      await loadStatus()
+    } catch (e) {
+      setError(String(e))
+    } finally {
+      setRecoveringIds(prev => prev.filter(id => id !== accountId))
+    }
+  }
+
+  const handleRecoverAllCooldown = async () => {
+    setError('')
+    setSuccess('')
+    setRecoveringAll(true)
+    try {
+      const res = await fetch(`${baseUrl}/api/accounts/recover-all-cooldown`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${form.adminKey.trim()}`,
+        },
+      })
+      if (!res.ok) {
+        throw new Error(await parseError(res, `恢复失败 (${res.status})`))
+      }
+      const data = await res.json()
+      const recovered = Number(data?.recovered || 0)
+      setSuccess(recovered > 0 ? `已恢复 ${recovered} 个冷却账号` : '当前没有冷却账号')
+      await loadStatus()
+    } catch (e) {
+      setError(String(e))
+    } finally {
+      setRecoveringAll(false)
     }
   }
 
@@ -403,6 +472,83 @@ function Kiro2ApiManager() {
             )}
             {!serviceInfo && <div>服务未返回状态信息，请确认服务已启动且 Admin Key 正确。</div>}
           </div>
+        </div>
+
+        <div className={`${colors.card} border ${colors.cardBorder} rounded-2xl p-5`}>
+          <div className="flex items-center justify-between mb-3">
+            <div className={`font-semibold ${colors.text}`}>账号状态（2API）</div>
+            <button
+              onClick={handleRecoverAllCooldown}
+              disabled={!status.running || recoveringAll || cooldownCount === 0}
+              className="px-3 py-2 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-sm disabled:opacity-50 flex items-center gap-2"
+            >
+              <RotateCcw size={14} className={recoveringAll ? 'animate-spin' : ''} />
+              {recoveringAll ? '恢复中...' : `恢复全部冷却 (${cooldownCount})`}
+            </button>
+          </div>
+
+          {!status.running && (
+            <div className={`text-sm ${colors.textMuted}`}>服务未启动，无法读取账号状态。</div>
+          )}
+
+          {status.running && accounts.length === 0 && (
+            <div className={`text-sm ${colors.textMuted}`}>暂无账号数据或 Admin Key 不匹配。</div>
+          )}
+
+          {status.running && accounts.length > 0 && (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className={`border-b ${colors.cardBorder}`}>
+                    <th className={`text-left py-2 pr-3 ${colors.textMuted} font-medium`}>账号</th>
+                    <th className={`text-left py-2 pr-3 ${colors.textMuted} font-medium`}>状态</th>
+                    <th className={`text-left py-2 pr-3 ${colors.textMuted} font-medium`}>请求</th>
+                    <th className={`text-left py-2 pr-3 ${colors.textMuted} font-medium`}>错误</th>
+                    <th className={`text-left py-2 ${colors.textMuted} font-medium`}>操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {accounts.map(account => {
+                    const recovering = recoveringIds.includes(account.id)
+                    return (
+                      <tr key={account.id} className={`border-b last:border-b-0 ${colors.cardBorder}`}>
+                        <td className={`py-2 pr-3 ${colors.text}`}>{account.name || account.id}</td>
+                        <td className="py-2 pr-3">
+                          <span className={`inline-flex px-2 py-0.5 rounded text-xs ${
+                            account.status === 'active'
+                              ? 'bg-emerald-500/15 text-emerald-500'
+                              : account.status === 'cooldown'
+                                ? 'bg-amber-500/15 text-amber-500'
+                                : account.status === 'invalid'
+                                  ? 'bg-red-500/15 text-red-500'
+                                  : 'bg-slate-500/15 text-slate-500'
+                          }`}>
+                            {account.status || '-'}
+                          </span>
+                        </td>
+                        <td className={`py-2 pr-3 ${colors.text}`}>{account.requestCount ?? 0}</td>
+                        <td className={`py-2 pr-3 ${colors.text}`}>{account.errorCount ?? 0}</td>
+                        <td className="py-2">
+                          {account.status === 'cooldown' ? (
+                            <button
+                              onClick={() => handleRecoverCooldown(account.id)}
+                              disabled={recovering || recoveringAll}
+                              className="px-2.5 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs disabled:opacity-50 flex items-center gap-1.5"
+                            >
+                              <RotateCcw size={12} className={recovering ? 'animate-spin' : ''} />
+                              {recovering ? '恢复中' : '恢复'}
+                            </button>
+                          ) : (
+                            <span className={`text-xs ${colors.textMuted}`}>-</span>
+                          )}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       </div>
     </div>
