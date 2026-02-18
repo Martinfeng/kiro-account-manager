@@ -42,14 +42,14 @@ export async function migrateModels(dbManager, dataDir) {
         ['^claude[-_.]?sonnet[-_.]?4[-_.]?6[-_.]?20260217[-_.]?thinking$', 'claude-sonnet-4.6', 'regex', 160, 1],
         ['^claude[-_.]?sonnet[-_.]?4[-_.]?6[-_.]?20260217$', 'claude-sonnet-4.6', 'regex', 150, 1],
         ['claude[-_.]?sonnet[-_.]?4[-_.]?6(?:[-_.]\\d+)?', 'claude-sonnet-4.6', 'regex', 120, 1],
-        ['claude[-_.]?sonnet[-_.]?4[-_.]?5(?:[-_.]\\d+)?', 'claude-sonnet-4-5-20250929', 'regex', 110, 1],
+        ['claude[-_.]?sonnet[-_.]?4[-_.]?5(?:[-_.]\\d+)?', 'claude-sonnet-4.5', 'regex', 110, 1],
         ['claude[-_.]?opus[-_.]?4[-_.]?6(?:[-_.]\\d+)?', 'claude-opus-4.6', 'regex', 120, 1],
-        ['claude[-_.]?opus[-_.]?4[-_.]?5(?:[-_.]\\d+)?', 'claude-opus-4-5-20251101', 'regex', 110, 1],
-        ['claude[-_.]?haiku[-_.]?4[-_.]?5(?:[-_.]\\d+)?', 'claude-haiku-4-5-20251001', 'regex', 110, 1],
+        ['claude[-_.]?opus[-_.]?4[-_.]?5(?:[-_.]\\d+)?', 'claude-opus-4.5', 'regex', 110, 1],
+        ['claude[-_.]?haiku[-_.]?4[-_.]?5(?:[-_.]\\d+)?', 'claude-haiku-4.5', 'regex', 110, 1],
         // 默认语义映射：未带版本时走最新稳定模型
         ['sonnet', 'claude-sonnet-4.6', 'contains', 10, 1],
         ['opus', 'claude-opus-4.6', 'contains', 10, 1],
-        ['haiku', 'claude-haiku-4-5-20251001', 'contains', 10, 1]
+        ['haiku', 'claude-haiku-4.5', 'contains', 10, 1]
       ];
 
       for (const mapping of defaultMappings) {
@@ -81,19 +81,19 @@ export async function migrateModels(dbManager, dataDir) {
 
       insertedMappings += dbManager.db.prepare(`
         UPDATE model_mappings
-        SET internal_id = 'claude-haiku-4-5-20251001', match_type = 'contains', priority = 10, enabled = 1
+        SET internal_id = 'claude-haiku-4.5', match_type = 'contains', priority = 10, enabled = 1
         WHERE external_pattern = 'haiku'
           AND match_type = 'contains'
-          AND internal_id = 'claude-haiku-4.5'
+          AND internal_id IN ('claude-haiku-4.5', 'claude-haiku-4-5-20251001')
       `).run().changes;
 
       // 兼容升级：修正旧的 4.5 映射ID到当前实际模型ID
       insertedMappings += dbManager.db.prepare(`
         UPDATE model_mappings
-        SET internal_id = 'claude-sonnet-4-5-20250929'
+        SET internal_id = 'claude-sonnet-4.5'
         WHERE external_pattern = 'claude[-_.]?sonnet[-_.]?4[-_.]?5(?:[-_.]\\d+)?'
           AND match_type = 'regex'
-          AND internal_id = 'claude-sonnet-4.5'
+          AND internal_id IN ('claude-sonnet-4.5', 'claude-sonnet-4-5-20250929')
       `).run().changes;
 
       insertedMappings += dbManager.db.prepare(`
@@ -146,18 +146,18 @@ export async function migrateModels(dbManager, dataDir) {
 
       insertedMappings += dbManager.db.prepare(`
         UPDATE model_mappings
-        SET internal_id = 'claude-opus-4-5-20251101'
+        SET internal_id = 'claude-opus-4.5'
         WHERE external_pattern = 'claude[-_.]?opus[-_.]?4[-_.]?5(?:[-_.]\\d+)?'
           AND match_type = 'regex'
-          AND internal_id = 'claude-opus-4.5'
+          AND internal_id IN ('claude-opus-4.5', 'claude-opus-4-5-20251101')
       `).run().changes;
 
       insertedMappings += dbManager.db.prepare(`
         UPDATE model_mappings
-        SET internal_id = 'claude-haiku-4-5-20251001'
+        SET internal_id = 'claude-haiku-4.5'
         WHERE external_pattern = 'claude[-_.]?haiku[-_.]?4[-_.]?5(?:[-_.]\\d+)?'
           AND match_type = 'regex'
-          AND internal_id = 'claude-haiku-4.5'
+          AND internal_id IN ('claude-haiku-4.5', 'claude-haiku-4-5-20251001')
       `).run().changes;
 
       // 同步默认模型的上下文窗口（仅更新旧默认值 32000）
