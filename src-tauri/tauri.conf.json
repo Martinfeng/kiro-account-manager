@@ -49,7 +49,7 @@
   },
   "bundle": {
     "active": true,
-    "createUpdaterArtifacts": true,
+    "createUpdaterArtifacts": false,
     "category": "DeveloperTool",
     "resources": [
       "resources/offline/kiro2api-node",
