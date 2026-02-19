@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { Play, Square, RefreshCw, Server, Activity, RotateCcw } from 'lucide-react'
 import { useTheme } from '../contexts/ThemeContext'
@@ -47,10 +47,37 @@ function Kiro2ApiManager() {
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
 
-  const baseUrl = useMemo(() => {
-    const port = form.port || status.port || 8080
-    return `http://127.0.0.1:${port}`
-  }, [form.port, status.port])
+  const getAdminBaseUrls = (port) => {
+    const set = new Set()
+    const hostRaw = (form.host || '').trim()
+    const normalized = !hostRaw || hostRaw === '0.0.0.0' || hostRaw === '::' || hostRaw === '[::]'
+      ? '127.0.0.1'
+      : hostRaw
+    set.add(`http://${normalized}:${port}`)
+    set.add(`http://127.0.0.1:${port}`)
+    set.add(`http://localhost:${port}`)
+    return [...set]
+  }
+
+  const fetchAdmin = async (path, init, port) => {
+    const targets = getAdminBaseUrls(port)
+    let lastResponse = null
+    let lastError = null
+
+    for (const base of targets) {
+      try {
+        const res = await fetch(`${base}${path}`, init)
+        if (res.ok) return res
+        if (res.status === 401 || res.status === 403) return res
+        lastResponse = res
+      } catch (e) {
+        lastError = e
+      }
+    }
+
+    if (lastResponse) return lastResponse
+    throw lastError || new Error('Admin API not reachable')
+  }
 
   const setField = (key, value) => {
     setForm(prev => ({ ...prev, [key]: value }))
@@ -127,8 +154,8 @@ function Kiro2ApiManager() {
     try {
       const headers = { Authorization: `Bearer ${adminKey}` }
       const [credRes, modeRes] = await Promise.all([
-        fetch(`http://127.0.0.1:${port}/api/admin/credentials`, { headers }),
-        fetch(`http://127.0.0.1:${port}/api/admin/config/load-balancing`, { headers }),
+        fetchAdmin('/api/admin/credentials', { headers }, port),
+        fetchAdmin('/api/admin/config/load-balancing', { headers }, port),
       ])
 
       if (credRes.ok) {
@@ -230,14 +257,15 @@ function Kiro2ApiManager() {
     setError('')
     setSuccess('')
     try {
-      const res = await fetch(`${baseUrl}/api/admin/config/load-balancing`, {
+      const port = status.port || form.port || DEFAULTS.port
+      const res = await fetchAdmin('/api/admin/config/load-balancing', {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${form.adminKey.trim()}`,
         },
         body: JSON.stringify({ mode: loadBalancingMode }),
-      })
+      }, port)
       if (!res.ok) {
         throw new Error(await parseError(res, `设置失败 (${res.status})`))
       }
@@ -261,12 +289,13 @@ function Kiro2ApiManager() {
     setError('')
     setSuccess('')
     await withAction(id, async () => {
-      const res = await fetch(`${baseUrl}/api/admin/credentials/${id}/reset`, {
+      const port = status.port || form.port || DEFAULTS.port
+      const res = await fetchAdmin(`/api/admin/credentials/${id}/reset`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${form.adminKey.trim()}`,
         },
-      })
+      }, port)
       if (!res.ok) {
         throw new Error(await parseError(res, `重置失败 (${res.status})`))
       }
@@ -279,14 +308,15 @@ function Kiro2ApiManager() {
     setError('')
     setSuccess('')
     await withAction(item.id, async () => {
-      const res = await fetch(`${baseUrl}/api/admin/credentials/${item.id}/disabled`, {
+      const port = status.port || form.port || DEFAULTS.port
+      const res = await fetchAdmin(`/api/admin/credentials/${item.id}/disabled`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${form.adminKey.trim()}`,
         },
         body: JSON.stringify({ disabled: !item.disabled }),
-      })
+      }, port)
       if (!res.ok) {
         throw new Error(await parseError(res, `更新失败 (${res.status})`))
       }
