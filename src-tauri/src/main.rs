@@ -122,6 +122,7 @@ fn main() {
             set_kiro_model,
             // Kiro2API 服务命令
             get_kiro2api_status,
+            get_kiro2api_request_logs,
             start_kiro2api_service,
             stop_kiro2api_service,
             // 应用设置命令

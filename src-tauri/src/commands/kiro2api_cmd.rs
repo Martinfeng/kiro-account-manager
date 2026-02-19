@@ -1,8 +1,13 @@
 use crate::account::Account;
 use crate::state::{AppState, Kiro2ApiRuntime};
 use chrono::{Local, NaiveDateTime, TimeZone};
+use once_cell::sync::Lazy;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::fs::{self, OpenOptions};
+use std::collections::VecDeque;
+use std::fs::File;
+use std::io::{BufRead, BufReader};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -41,6 +46,25 @@ pub struct Kiro2ApiStatus {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct Kiro2ApiRequestLog {
+    pub timestamp: String,
+    pub session_id: Option<String>,
+    pub model: String,
+    pub status_code: u16,
+    pub status_text: String,
+}
+
+#[derive(Debug, Clone)]
+struct PendingRequestLog {
+    timestamp: String,
+    session_id: Option<String>,
+    model: String,
+    status_code: Option<u16>,
+    status_text: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct KiroRsConfig {
     host: String,
     port: u16,
@@ -72,6 +96,19 @@ struct KiroRsCredential {
 }
 
 const BUNDLED_RUNTIME_RELATIVE_MAC_ARM64: &str = "offline/kiro-rs/darwin-aarch64/kiro-rs";
+const LEGACY_NODE_DATA_DIR_RELATIVE: &str = ".kiro-account-manager/kiro2api-node";
+
+static ANSI_ESCAPE_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"\x1b\[[0-9;]*[A-Za-z]").expect("invalid ansi regex"));
+static TIMESTAMP_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(\d{4}-\d{2}-\d{2}T[0-9:\.]+Z)").expect("invalid timestamp regex")
+});
+static SESSION_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(sess_[A-Za-z0-9_]+)").expect("invalid session regex"));
+static MODEL_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"model=([^\s]+)").expect("invalid model regex"));
+static HTTP_STATUS_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"\b(\d{3})\s+[A-Za-z]").expect("invalid status regex"));
 
 fn account_store_path() -> PathBuf {
     let data_dir = dirs::data_dir().unwrap_or_else(|| {
@@ -91,6 +128,16 @@ fn default_runtime_data_dir() -> PathBuf {
         PathBuf::from(home)
     });
     data_dir.join(".kiro-account-manager").join("kiro-rs")
+}
+
+fn default_legacy_node_data_dir() -> PathBuf {
+    let data_dir = dirs::data_dir().unwrap_or_else(|| {
+        let home = std::env::var("USERPROFILE")
+            .or_else(|_| std::env::var("HOME"))
+            .unwrap_or_else(|_| ".".to_string());
+        PathBuf::from(home)
+    });
+    data_dir.join(LEGACY_NODE_DATA_DIR_RELATIVE)
 }
 
 fn command_in_path_candidates(name: &str) -> Vec<PathBuf> {
@@ -508,6 +555,183 @@ fn cleanup_stale_kiro2api_on_port(_port: u16, _marker_path: Option<&Path>) -> Re
     Ok(())
 }
 
+fn strip_ansi(line: &str) -> String {
+    ANSI_ESCAPE_RE.replace_all(line, "").into_owned()
+}
+
+fn extract_timestamp(line: &str) -> Option<String> {
+    TIMESTAMP_RE
+        .captures(line)
+        .and_then(|caps| caps.get(1))
+        .map(|m| m.as_str().to_string())
+}
+
+fn extract_session_id(line: &str) -> Option<String> {
+    SESSION_RE
+        .captures(line)
+        .and_then(|caps| caps.get(1))
+        .map(|m| m.as_str().to_string())
+}
+
+fn extract_model(line: &str) -> Option<String> {
+    MODEL_RE
+        .captures(line)
+        .and_then(|caps| caps.get(1))
+        .map(|m| m.as_str().to_string())
+}
+
+fn extract_http_status_code(line: &str) -> Option<u16> {
+    HTTP_STATUS_RE
+        .captures(line)
+        .and_then(|caps| caps.get(1))
+        .and_then(|m| m.as_str().parse::<u16>().ok())
+}
+
+fn extract_after_marker(line: &str, marker: &str) -> Option<String> {
+    let idx = line.find(marker)?;
+    let text = line[(idx + marker.len())..].trim();
+    if text.is_empty() {
+        None
+    } else {
+        Some(text.to_string())
+    }
+}
+
+fn clamp_status_text(text: String) -> String {
+    let max_chars = 360;
+    if text.chars().count() <= max_chars {
+        return text;
+    }
+    let mut clipped = String::new();
+    for ch in text.chars().take(max_chars) {
+        clipped.push(ch);
+    }
+    clipped.push_str("...");
+    clipped
+}
+
+fn read_last_lines(path: &Path, max_lines: usize) -> Result<Vec<String>, String> {
+    let file = File::open(path).map_err(|e| format!("open log file failed: {}", e))?;
+    let reader = BufReader::new(file);
+    let mut queue: VecDeque<String> = VecDeque::with_capacity(max_lines + 1);
+
+    for line in reader.lines() {
+        let line = line.map_err(|e| format!("read log file failed: {}", e))?;
+        queue.push_back(line);
+        if queue.len() > max_lines {
+            let _ = queue.pop_front();
+        }
+    }
+
+    Ok(queue.into_iter().collect())
+}
+
+fn finalize_pending(pending: Option<PendingRequestLog>, out: &mut Vec<Kiro2ApiRequestLog>) {
+    if let Some(mut req) = pending {
+        let status_code = req.status_code.unwrap_or(200);
+        let status_text = req.status_text.take().unwrap_or_else(|| "OK".to_string());
+        out.push(Kiro2ApiRequestLog {
+            timestamp: req.timestamp,
+            session_id: req.session_id,
+            model: req.model,
+            status_code,
+            status_text: clamp_status_text(status_text),
+        });
+    }
+}
+
+fn parse_request_logs(lines: &[String]) -> Vec<Kiro2ApiRequestLog> {
+    let mut out: Vec<Kiro2ApiRequestLog> = Vec::new();
+    let mut pending: Option<PendingRequestLog> = None;
+
+    for raw_line in lines {
+        let line = strip_ansi(raw_line);
+        if line.is_empty() {
+            continue;
+        }
+
+        if line.contains("Received POST /v1/messages request") {
+            finalize_pending(pending.take(), &mut out);
+            let timestamp = extract_timestamp(&line).unwrap_or_else(|| "-".to_string());
+            let model = extract_model(&line).unwrap_or_else(|| "-".to_string());
+            let session_id = extract_session_id(&line);
+            pending = Some(PendingRequestLog {
+                timestamp,
+                session_id,
+                model,
+                status_code: None,
+                status_text: None,
+            });
+            continue;
+        }
+
+        let Some(req) = pending.as_mut() else {
+            continue;
+        };
+
+        if req.session_id.is_none() {
+            req.session_id = extract_session_id(&line);
+        }
+
+        if line.contains("请求转换失败:") {
+            req.status_code = Some(400);
+            req.status_text = extract_after_marker(&line, "请求转换失败:");
+            continue;
+        }
+
+        if line.contains("Kiro API 调用失败:") {
+            req.status_code = Some(502);
+            req.status_text = extract_after_marker(&line, "Kiro API 调用失败:");
+            continue;
+        }
+
+        if line.contains("Invalid API key")
+            || line.contains("authentication_error")
+            || line.contains("认证失败")
+        {
+            req.status_code = Some(401);
+            req.status_text = Some("Invalid API key".to_string());
+            continue;
+        }
+
+        if line.contains("API 请求失败（上游瞬态错误") {
+            if req.status_code.is_none() {
+                req.status_code = extract_http_status_code(&line);
+            }
+            req.status_text = extract_after_marker(&line, "API 请求失败（上游瞬态错误，尝试");
+        }
+    }
+
+    finalize_pending(pending.take(), &mut out);
+    out
+}
+
+fn resolve_log_path_for_read(state: &AppState) -> Result<Option<PathBuf>, String> {
+    {
+        let mut runtime = state.kiro2api.lock().map_err(|e| format!("lock failed: {}", e))?;
+        cleanup_if_exited(&mut runtime);
+        if let Some(r) = runtime.as_ref() {
+            let path = PathBuf::from(&r.log_path);
+            if path.exists() {
+                return Ok(Some(path));
+            }
+        }
+    }
+
+    let candidates = [
+        default_runtime_data_dir().join("kiro2api.log"),
+        default_legacy_node_data_dir().join("kiro2api.log"),
+    ];
+
+    for path in candidates {
+        if path.exists() {
+            return Ok(Some(path));
+        }
+    }
+
+    Ok(None)
+}
+
 async fn check_health(port: u16, api_key: &str) -> bool {
     let url = format!("http://127.0.0.1:{}/v1/models", port);
     let client = reqwest::Client::new();
@@ -515,6 +739,32 @@ async fn check_health(port: u16, api_key: &str) -> bool {
         Ok(resp) => resp.status().is_success(),
         Err(_) => false,
     }
+}
+
+#[tauri::command]
+pub async fn get_kiro2api_request_logs(
+    state: State<'_, AppState>,
+    limit: Option<usize>,
+) -> Result<Vec<Kiro2ApiRequestLog>, String> {
+    let limit = limit.unwrap_or(100).clamp(20, 500);
+    let path = match resolve_log_path_for_read(&state)? {
+        Some(path) => path,
+        None => return Ok(Vec::new()),
+    };
+
+    let line_window = (limit * 30).clamp(300, 20_000);
+    let lines = read_last_lines(&path, line_window)?;
+    let mut logs = parse_request_logs(&lines);
+    if logs.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    if logs.len() > limit {
+        let start = logs.len() - limit;
+        logs = logs.split_off(start);
+    }
+    logs.reverse();
+    Ok(logs)
 }
 
 #[tauri::command]

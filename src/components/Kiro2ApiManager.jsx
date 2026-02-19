@@ -38,6 +38,7 @@ function Kiro2ApiManager() {
   })
   const [credentials, setCredentials] = useState([])
   const [summary, setSummary] = useState({ total: 0, available: 0, currentId: null })
+  const [requestLogs, setRequestLogs] = useState([])
   const [loadBalancingMode, setLoadBalancingMode] = useState('priority')
   const [saving, setSaving] = useState(false)
   const [starting, setStarting] = useState(false)
@@ -81,6 +82,20 @@ function Kiro2ApiManager() {
 
   const setField = (key, value) => {
     setForm(prev => ({ ...prev, [key]: value }))
+  }
+
+  const formatLogTime = (value) => {
+    if (!value || value === '-') return '-'
+    const d = new Date(value)
+    if (Number.isNaN(d.getTime())) return value
+    return d.toLocaleString()
+  }
+
+  const statusClass = (code) => {
+    if (code >= 500) return 'bg-red-500/15 text-red-500'
+    if (code >= 400) return 'bg-amber-500/15 text-amber-500'
+    if (code >= 300) return 'bg-sky-500/15 text-sky-500'
+    return 'bg-emerald-500/15 text-emerald-500'
   }
 
   const parseError = async (res, fallback = '请求失败') => {
@@ -182,16 +197,30 @@ function Kiro2ApiManager() {
     }
   }
 
+  const loadRequestLogs = async (limit = 120) => {
+    try {
+      const logs = await invoke('get_kiro2api_request_logs', { limit })
+      setRequestLogs(Array.isArray(logs) ? logs : [])
+    } catch (_) {
+      setRequestLogs([])
+    }
+  }
+
   const loadStatus = async (silent = true) => {
     if (!silent) setRefreshing(true)
     try {
       const res = await invoke('get_kiro2api_status')
       setStatus(res)
       if (res.running && form.adminKey.trim()) {
-        await loadAdminData(form.adminKey.trim(), res.port || form.port)
+        const port = res.port || form.port
+        await Promise.all([
+          loadAdminData(form.adminKey.trim(), port),
+          loadRequestLogs(120),
+        ])
       } else {
         setCredentials([])
         setSummary({ total: 0, available: 0, currentId: null })
+        setRequestLogs([])
       }
     } catch (e) {
       setError(String(e))
@@ -245,6 +274,7 @@ function Kiro2ApiManager() {
       setStatus(res)
       setCredentials([])
       setSummary({ total: 0, available: 0, currentId: null })
+      setRequestLogs([])
       setSuccess('Kiro2API 已停止')
     } catch (e) {
       setError(String(e))
@@ -594,6 +624,54 @@ function Kiro2ApiManager() {
               </table>
             </div>
           )}
+        </div>
+
+        <div className={`${colors.card} border ${colors.cardBorder} rounded-2xl p-5`}>
+          <div className={`font-semibold ${colors.text} mb-3`}>请求日志（最近 120 条）</div>
+          {!status.running && (
+            <div className={`text-sm ${colors.textMuted}`}>服务未启动，暂无请求日志。</div>
+          )}
+          {status.running && requestLogs.length === 0 && (
+            <div className={`text-sm ${colors.textMuted}`}>暂无可解析日志记录。</div>
+          )}
+          {status.running && requestLogs.length > 0 && (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className={`text-left ${colors.textMuted}`}>
+                    <th className="py-2 pr-4">请求时间</th>
+                    <th className="py-2 pr-4">Session ID</th>
+                    <th className="py-2 pr-4">模型</th>
+                    <th className="py-2 pr-4">返回码</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {requestLogs.map((log, idx) => (
+                    <tr key={`${log.timestamp}-${log.model}-${idx}`} className={`border-t ${colors.cardBorder}`}>
+                      <td className={`py-2 pr-4 ${colors.text}`}>{formatLogTime(log.timestamp)}</td>
+                      <td className={`py-2 pr-4 ${colors.text}`} title={log.sessionId || ''}>
+                        <span className="font-mono">{log.sessionId || '-'}</span>
+                      </td>
+                      <td className={`py-2 pr-4 ${colors.text}`} title={log.model}>
+                        <span className="font-mono">{log.model}</span>
+                      </td>
+                      <td className="py-2 pr-4">
+                        <span
+                          title={log.statusText || ''}
+                          className={`inline-flex px-2 py-0.5 rounded text-xs font-medium cursor-help ${statusClass(Number(log.statusCode || 0))}`}
+                        >
+                          {log.statusCode}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          <div className={`mt-2 text-xs ${colors.textMuted}`}>
+            提示：将鼠标移到返回码上可查看状态详情。
+          </div>
         </div>
       </div>
     </div>
