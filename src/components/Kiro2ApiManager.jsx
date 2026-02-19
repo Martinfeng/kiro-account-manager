@@ -14,6 +14,13 @@ const DEFAULTS = {
   kiroVersion: '0.9.2',
 }
 
+const LEGACY_NODE_PATH_RE = /kiro2api-node/i
+
+const isLegacyNodeProjectPath = (value) => {
+  if (!value) return false
+  return LEGACY_NODE_PATH_RE.test(String(value).replace(/\\/g, '/'))
+}
+
 function Kiro2ApiManager() {
   const { theme, colors } = useTheme()
   const isDark = theme === 'dark'
@@ -61,15 +68,29 @@ function Kiro2ApiManager() {
   const loadSettings = async () => {
     try {
       const settings = await invoke('get_app_settings').catch(() => ({}))
+      const rawProjectPath = (settings.kiro2apiProjectPath || '').trim()
+      const projectPath = isLegacyNodeProjectPath(rawProjectPath) ? '' : rawProjectPath
+      const rawKiroVersion = (settings.kiro2apiKiroVersion || DEFAULTS.kiroVersion).trim()
+      const kiroVersion = /^0\.8\./.test(rawKiroVersion) ? DEFAULTS.kiroVersion : rawKiroVersion
+
       setForm({
-        projectPath: settings.kiro2apiProjectPath || DEFAULTS.projectPath,
+        projectPath,
         port: settings.kiro2apiPort || DEFAULTS.port,
         apiKey: settings.kiro2apiApiKey || DEFAULTS.apiKey,
         adminKey: settings.kiro2apiAdminKey || DEFAULTS.adminKey,
         proxyUrl: settings.kiro2apiProxyUrl || DEFAULTS.proxyUrl,
         region: settings.kiro2apiRegion || DEFAULTS.region,
-        kiroVersion: settings.kiro2apiKiroVersion || DEFAULTS.kiroVersion,
+        kiroVersion,
       })
+
+      if (projectPath !== rawProjectPath || kiroVersion !== rawKiroVersion) {
+        await invoke('save_app_settings', {
+          settings: {
+            kiro2apiProjectPath: projectPath || null,
+            kiro2apiKiroVersion: kiroVersion,
+          },
+        }).catch(() => {})
+      }
     } catch (_) {
       // ignore
     }
@@ -78,9 +99,12 @@ function Kiro2ApiManager() {
   const saveSettings = async () => {
     setSaving(true)
     try {
+      const normalizedPath = isLegacyNodeProjectPath(form.projectPath.trim())
+        ? ''
+        : form.projectPath.trim()
       await invoke('save_app_settings', {
         settings: {
-          kiro2apiProjectPath: form.projectPath.trim() || null,
+          kiro2apiProjectPath: normalizedPath || null,
           kiro2apiPort: Number(form.port) || DEFAULTS.port,
           kiro2apiApiKey: form.apiKey.trim() || DEFAULTS.apiKey,
           kiro2apiAdminKey: form.adminKey.trim() || DEFAULTS.adminKey,
@@ -152,10 +176,16 @@ function Kiro2ApiManager() {
     setError('')
     setSuccess('')
     try {
+      const normalizedPath = isLegacyNodeProjectPath(form.projectPath.trim())
+        ? ''
+        : form.projectPath.trim()
+      if (normalizedPath !== form.projectPath.trim()) {
+        setField('projectPath', '')
+      }
       await saveSettings()
       const res = await invoke('start_kiro2api_service', {
         params: {
-          projectPath: form.projectPath.trim() || null,
+          projectPath: normalizedPath || null,
           port: Number(form.port) || DEFAULTS.port,
           apiKey: form.apiKey.trim() || DEFAULTS.apiKey,
           adminKey: form.adminKey.trim() || DEFAULTS.adminKey,
@@ -366,6 +396,9 @@ function Kiro2ApiManager() {
 
         <div className={`${colors.card} border ${colors.cardBorder} rounded-2xl p-5`}>
           <div className={`font-semibold ${colors.text} mb-4`}>启动配置</div>
+          <div className={`mb-4 text-xs ${colors.textMuted}`}>
+            提示：`http://127.0.0.1:8080` 根路径没有页面。管理页请打开 `/admin`，模型接口用 `/v1/models`（需 `x-api-key`）。
+          </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
             <label className="space-y-1 md:col-span-2">
               <div className={colors.textMuted}>运行时路径（可选）</div>
