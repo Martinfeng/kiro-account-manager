@@ -24,35 +24,72 @@ function App() {
   const [activeMenu, setActiveMenu] = useState('home')
   const { colors } = useTheme()
   const refreshTimerRef = useRef(null)
+  const refreshingRef = useRef(false)
 
-  // 启动时只刷新 token（不获取 usage，快速启动）
-  const refreshExpiredTokensOnly = async () => {
+  const isAutoRefreshEnabled = (settings) => settings?.autoRefresh !== false
+
+  const resolveRefreshIntervalMinutes = (settings) => {
+    const n = Number(settings?.autoRefreshInterval)
+    return Number.isFinite(n) && n > 0 ? n : 50
+  }
+
+  const parseExpiresAtMs = (expiresAt) => {
+    if (!expiresAt || typeof expiresAt !== 'string') return null
+    const raw = expiresAt.trim()
+    if (!raw) return null
+
+    const direct = Date.parse(raw)
+    if (!Number.isNaN(direct)) return direct
+
+    const match = raw.match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})(?:[ T])(\d{1,2}):(\d{2})(?::(\d{2}))?$/)
+    if (!match) return null
+
+    const year = Number(match[1])
+    const month = Number(match[2]) - 1
+    const day = Number(match[3])
+    const hour = Number(match[4])
+    const minute = Number(match[5])
+    const second = Number(match[6] || '0')
+    const dt = new Date(year, month, day, hour, minute, second)
+    const time = dt.getTime()
+    return Number.isNaN(time) ? null : time
+  }
+
+  const collectExpiringAccounts = (accounts, nowMs, refreshThresholdMs) => {
+    return accounts.filter(acc => {
+      if (acc.status === '已封禁' || acc.status === '封禁') return false
+      const expiresAtMs = parseExpiresAtMs(acc.expiresAt)
+      if (expiresAtMs === null) return false
+      return (expiresAtMs - nowMs) < refreshThresholdMs
+    })
+  }
+
+  const refreshExpiringTokens = async (source) => {
+    if (refreshingRef.current) {
+      console.log(`[AutoRefresh] 上一次刷新仍在进行，跳过本次 (${source})`)
+      return
+    }
+    refreshingRef.current = true
     try {
       const settings = await invoke('get_app_settings').catch(() => ({}))
-      if (!settings.autoRefresh) return
-      
-      const accounts = await invoke('get_accounts')
-      if (!accounts || accounts.length === 0) return
-      
-      const now = new Date()
-      const refreshThreshold = 5 * 60 * 1000 // 提前 5 分钟
-      
-      const expiredAccounts = accounts.filter(acc => {
-        // 跳过已封禁账号
-        if (acc.status === '已封禁' || acc.status === '封禁') return false
-        if (!acc.expiresAt) return false
-        const expiresAt = new Date(acc.expiresAt.replace(/\//g, '-'))
-        return (expiresAt.getTime() - now.getTime()) < refreshThreshold
-      })
-      
-      if (expiredAccounts.length === 0) {
-        console.log('[AutoRefresh] 没有需要刷新的 token')
+      if (!isAutoRefreshEnabled(settings)) {
+        console.log(`[AutoRefresh] 已禁用自动刷新，跳过 (${source})`)
         return
       }
-      
-      console.log(`[AutoRefresh] 刷新 ${expiredAccounts.length} 个过期 token...`)
-      
-      // 并发刷新
+
+      const accounts = await invoke('get_accounts')
+      if (!accounts || accounts.length === 0) return
+
+      const nowMs = Date.now()
+      const refreshThresholdMs = 5 * 60 * 1000
+      const expiredAccounts = collectExpiringAccounts(accounts, nowMs, refreshThresholdMs)
+
+      if (expiredAccounts.length === 0) {
+        console.log(`[AutoRefresh] 没有需要刷新的 token (${source})`)
+        return
+      }
+
+      console.log(`[AutoRefresh] 刷新 ${expiredAccounts.length} 个 token (${source})...`)
       await Promise.allSettled(
         expiredAccounts.map(async (account) => {
           try {
@@ -63,55 +100,22 @@ function App() {
           }
         })
       )
-      
       console.log('[AutoRefresh] token 刷新完成')
     } catch (e) {
       console.error('[AutoRefresh] 刷新失败:', e)
+    } finally {
+      refreshingRef.current = false
     }
+  }
+
+  // 启动时只刷新 token（不获取 usage，快速启动）
+  const refreshExpiredTokensOnly = async () => {
+    await refreshExpiringTokens('startup')
   }
 
   // 定时刷新：只刷新 token
   const checkAndRefreshExpiringTokens = async () => {
-    try {
-      const settings = await invoke('get_app_settings').catch(() => ({}))
-      if (!settings.autoRefresh) return
-      
-      const accounts = await invoke('get_accounts')
-      if (!accounts || accounts.length === 0) return
-      
-      const now = new Date()
-      const refreshThreshold = 5 * 60 * 1000
-      
-      const expiredAccounts = accounts.filter(acc => {
-        // 跳过已封禁账号
-        if (acc.status === '已封禁' || acc.status === '封禁') return false
-        if (!acc.expiresAt) return false
-        const expiresAt = new Date(acc.expiresAt.replace(/\//g, '-'))
-        return (expiresAt.getTime() - now.getTime()) < refreshThreshold
-      })
-      
-      if (expiredAccounts.length === 0) {
-        console.log('[AutoRefresh] 没有需要刷新的 token')
-        return
-      }
-      
-      console.log(`[AutoRefresh] 刷新 ${expiredAccounts.length} 个 token...`)
-      
-      await Promise.allSettled(
-        expiredAccounts.map(async (account) => {
-          try {
-            await invoke('refresh_account_token', { id: account.id })
-            console.log(`[AutoRefresh] ${account.email} token 刷新成功`)
-          } catch (e) {
-            console.warn(`[AutoRefresh] ${account.email} token 刷新失败:`, e)
-          }
-        })
-      )
-      
-      console.log('[AutoRefresh] token 刷新完成')
-    } catch (e) {
-      console.error('[AutoRefresh] 刷新失败:', e)
-    }
+    await refreshExpiringTokens('timer')
   }
 
   // 启动自动刷新定时器
@@ -125,9 +129,10 @@ function App() {
     
     // 从设置读取刷新间隔
     const settings = await invoke('get_app_settings').catch(() => ({}))
-    const intervalMs = (settings.autoRefreshInterval || 50) * 60 * 1000
+    const intervalMinutes = resolveRefreshIntervalMinutes(settings)
+    const intervalMs = intervalMinutes * 60 * 1000
     
-    console.log(`[AutoRefresh] 定时器间隔: ${settings.autoRefreshInterval || 50} 分钟`)
+    console.log(`[AutoRefresh] 定时器间隔: ${intervalMinutes} 分钟`)
     refreshTimerRef.current = setInterval(checkAndRefreshExpiringTokens, intervalMs)
   }
 
