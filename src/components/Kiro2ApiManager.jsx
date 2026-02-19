@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { openUrl } from '@tauri-apps/plugin-opener'
-import { Play, Square, RefreshCw, ExternalLink, Server, Activity, RotateCcw } from 'lucide-react'
+import { Play, Square, RefreshCw, Server, Activity, RotateCcw } from 'lucide-react'
 import { useTheme } from '../contexts/ThemeContext'
 
 const DEFAULTS = {
   projectPath: '',
+  host: '0.0.0.0',
   port: 8080,
   apiKey: 'sk-default-key',
   adminKey: 'admin-default-key',
@@ -75,6 +75,7 @@ function Kiro2ApiManager() {
 
       setForm({
         projectPath,
+        host: (settings.kiro2apiHost || DEFAULTS.host).trim() || DEFAULTS.host,
         port: settings.kiro2apiPort || DEFAULTS.port,
         apiKey: settings.kiro2apiApiKey || DEFAULTS.apiKey,
         adminKey: settings.kiro2apiAdminKey || DEFAULTS.adminKey,
@@ -105,6 +106,7 @@ function Kiro2ApiManager() {
       await invoke('save_app_settings', {
         settings: {
           kiro2apiProjectPath: normalizedPath || null,
+          kiro2apiHost: form.host.trim() || DEFAULTS.host,
           kiro2apiPort: Number(form.port) || DEFAULTS.port,
           kiro2apiApiKey: form.apiKey.trim() || DEFAULTS.apiKey,
           kiro2apiAdminKey: form.adminKey.trim() || DEFAULTS.adminKey,
@@ -186,6 +188,7 @@ function Kiro2ApiManager() {
       const res = await invoke('start_kiro2api_service', {
         params: {
           projectPath: normalizedPath || null,
+          host: form.host.trim() || DEFAULTS.host,
           port: Number(form.port) || DEFAULTS.port,
           apiKey: form.apiKey.trim() || DEFAULTS.apiKey,
           adminKey: form.adminKey.trim() || DEFAULTS.adminKey,
@@ -383,21 +386,13 @@ function Kiro2ApiManager() {
               <Square size={14} />
               {stopping ? '停止中...' : '停止服务'}
             </button>
-            <button
-              onClick={() => openUrl(`${baseUrl}/admin`)}
-              disabled={!status.running}
-              className={`px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50 flex items-center gap-2 ${isDark ? 'bg-white/10 hover:bg-white/15 text-white' : 'bg-gray-100 hover:bg-gray-200 text-gray-900'}`}
-            >
-              <ExternalLink size={14} />
-              打开管理页
-            </button>
           </div>
         </div>
 
         <div className={`${colors.card} border ${colors.cardBorder} rounded-2xl p-5`}>
           <div className={`font-semibold ${colors.text} mb-4`}>启动配置</div>
           <div className={`mb-4 text-xs ${colors.textMuted}`}>
-            提示：`http://127.0.0.1:8080` 根路径没有页面。管理页请打开 `/admin`，模型接口用 `/v1/models`（需 `x-api-key`）。
+            提示：kiro.rs 没有 Web 管理页，管理功能在当前 TAB。局域网访问请把监听地址设为 `0.0.0.0`，并用 `/v1/models`（需 `x-api-key`）测试。
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
             <label className="space-y-1 md:col-span-2">
@@ -406,6 +401,15 @@ function Kiro2ApiManager() {
                 value={form.projectPath}
                 onChange={e => setField('projectPath', e.target.value)}
                 placeholder="留空使用内置离线 kiro-rs，或填写本地 kiro-rs 可执行文件/项目路径"
+                className={`w-full px-3 py-2 rounded-lg border ${colors.cardBorder} ${colors.input} ${colors.text}`}
+              />
+            </label>
+            <label className="space-y-1">
+              <div className={colors.textMuted}>监听地址</div>
+              <input
+                value={form.host}
+                onChange={e => setField('host', e.target.value)}
+                placeholder="0.0.0.0（允许局域网访问）"
                 className={`w-full px-3 py-2 rounded-lg border ${colors.cardBorder} ${colors.input} ${colors.text}`}
               />
             </label>

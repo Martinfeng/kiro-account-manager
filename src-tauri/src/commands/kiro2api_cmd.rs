@@ -15,6 +15,7 @@ use tauri::{AppHandle, Manager, State};
 #[serde(rename_all = "camelCase")]
 pub struct Kiro2ApiStartParams {
     pub project_path: Option<String>,
+    pub host: Option<String>,
     pub port: Option<u16>,
     pub api_key: Option<String>,
     pub admin_key: Option<String>,
@@ -569,6 +570,7 @@ pub async fn start_kiro2api_service(
 ) -> Result<Kiro2ApiStatus, String> {
     let params = params.unwrap_or(Kiro2ApiStartParams {
         project_path: None,
+        host: None,
         port: None,
         api_key: None,
         admin_key: None,
@@ -595,6 +597,12 @@ pub async fn start_kiro2api_service(
         .map(PathBuf::from)
         .unwrap_or_else(default_runtime_data_dir);
 
+    let host = params
+        .host
+        .as_ref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "0.0.0.0".to_string());
     let port = params.port.unwrap_or(8080);
     cleanup_stale_kiro2api_on_port(port, Some(&data_dir))?;
 
@@ -606,7 +614,7 @@ pub async fn start_kiro2api_service(
     let kiro_version = params.kiro_version.unwrap_or_else(|| "0.9.2".to_string());
 
     let config = KiroRsConfig {
-        host: "127.0.0.1".to_string(),
+        host,
         port,
         region: region.clone(),
         kiro_version,

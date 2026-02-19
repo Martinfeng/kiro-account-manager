@@ -19,6 +19,7 @@ pub struct AppSettings {
     pub account_machine_ids: Option<std::collections::HashMap<String, String>>,  // 账户ID -> 机器码映射
     // Kiro2API 服务配置
     pub kiro2api_project_path: Option<String>,
+    pub kiro2api_host: Option<String>,
     pub kiro2api_port: Option<i32>,
     pub kiro2api_api_key: Option<String>,
     pub kiro2api_admin_key: Option<String>,
@@ -73,6 +74,7 @@ fn save_app_settings_inner(updates: AppSettings) -> Result<(), String> {
     if updates.use_bound_machine_id.is_some() { current.use_bound_machine_id = updates.use_bound_machine_id; }
     if updates.account_machine_ids.is_some() { current.account_machine_ids = updates.account_machine_ids; }
     if updates.kiro2api_project_path.is_some() { current.kiro2api_project_path = updates.kiro2api_project_path; }
+    if updates.kiro2api_host.is_some() { current.kiro2api_host = updates.kiro2api_host; }
     if updates.kiro2api_port.is_some() { current.kiro2api_port = updates.kiro2api_port; }
     if updates.kiro2api_api_key.is_some() { current.kiro2api_api_key = updates.kiro2api_api_key; }
     if updates.kiro2api_admin_key.is_some() { current.kiro2api_admin_key = updates.kiro2api_admin_key; }
